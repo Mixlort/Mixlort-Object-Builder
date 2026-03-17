@@ -89,9 +89,11 @@ function PreviewSection({
   const currentCategory = useAppStore((s) => s.currentCategory)
   const isPlaying = useAnimationStore((s) => s.isPlaying)
   const currentFrame = useAnimationStore((s) => s.currentFrame)
+  const isComplete = useAnimationStore((s) => s.isComplete)
 
   const [frameGroupType, setFrameGroupType] = useState<FrameGroupType>(FGT.WALKING)
   const [zoomed, setZoomed] = useState(false)
+  const [effectLoopEnabled, setEffectLoopEnabled] = useState(false)
 
   const animFrameRef = useRef<number>(0)
 
@@ -111,6 +113,7 @@ function PreviewSection({
     const defaultFgt = hasWalking ? FGT.WALKING : FGT.DEFAULT
     setFrameGroupType(defaultFgt)
     setZoomed(false)
+    setEffectLoopEnabled(false)
 
     const fg = thing.frameGroups?.[defaultFgt === FGT.WALKING ? 1 : 0] ?? thing.frameGroups?.[0]
     if (fg) {
@@ -171,6 +174,12 @@ function PreviewSection({
   const hasWalking = isOutfit && thing.frameGroups && thing.frameGroups.length > 1
   const fg = thing.frameGroups?.[frameGroupType === FGT.WALKING ? 1 : 0] ?? thing.frameGroups?.[0]
   const hasAnimation = fg !== undefined && fg.frames > 1
+  const isEffect = thing.category === ThingCategory.EFFECT
+
+  useEffect(() => {
+    if (!isEffect || !effectLoopEnabled || !hasAnimation || !isComplete) return
+    useAnimationStore.getState().play()
+  }, [isEffect, effectLoopEnabled, hasAnimation, isComplete])
 
   // Legacy: outfits always face South (patternX=2), others patternX=0
   const patternX = isOutfit ? 2 : 0
@@ -262,6 +271,18 @@ function PreviewSection({
           />
         </button>
       </div>
+
+      {isEffect && hasAnimation && (
+        <label className="mt-1.5 flex items-center justify-center gap-1.5 text-xs text-secondary">
+          <input
+            type="checkbox"
+            className="accent-accent"
+            checked={effectLoopEnabled}
+            onChange={(event) => setEffectLoopEnabled(event.target.checked)}
+          />
+          <span>{t('labels.loop')}</span>
+        </label>
+      )}
     </div>
   )
 }
