@@ -1,15 +1,8 @@
 import React from 'react'
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { act, fireEvent, render, screen } from '@testing-library/react'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { PreviewPanel } from '../PreviewPanel'
-import {
-  resetAppStore,
-  resetEditorStore,
-  resetAnimationStore,
-  useAppStore,
-  useAnimationStore,
-  useEditorStore
-} from '../../../stores'
+import { resetAppStore, resetEditorStore, useAppStore, useEditorStore } from '../../../stores'
 import {
   ThingCategory,
   createClientInfo,
@@ -20,8 +13,14 @@ import {
 } from '../../../types'
 
 vi.mock('../../sprites', () => ({
-  SpriteRenderer: () => <div data-testid="sprite-renderer" />
+  SpriteRenderer: ({ frame }: { frame?: number }) => <div data-testid="sprite-renderer">{frame}</div>
 }))
+
+function flushAnimationFrame(frameTime = 120) {
+  act(() => {
+    vi.advanceTimersByTime(frameTime)
+  })
+}
 
 function makeThingData() {
   const clientInfo = createClientInfo()
@@ -63,7 +62,11 @@ describe('PreviewPanel', () => {
   beforeEach(() => {
     resetAppStore()
     resetEditorStore()
-    resetAnimationStore()
+    vi.useFakeTimers()
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
   })
 
   it('does not break hook ordering when editing thing data appears after initial render', () => {
@@ -96,32 +99,24 @@ describe('PreviewPanel', () => {
 
     render(<PreviewPanel />)
 
-    await waitFor(() => {
-      expect(useAnimationStore.getState().frameGroup?.frames).toBe(2)
-      expect(useAnimationStore.getState().isPlaying).toBe(true)
-      expect(useAnimationStore.getState().frameGroup?.loopCount).toBe(0)
-    })
-
+    expect(screen.getByTestId('sprite-renderer')).toHaveTextContent('0')
     expect(screen.getByRole('switch', { name: 'Zoom' })).toHaveAttribute('aria-checked', 'true')
     expect(screen.getByRole('switch', { name: 'Loop' })).toHaveAttribute('aria-checked', 'true')
 
+    flushAnimationFrame(120)
+    expect(screen.getByTestId('sprite-renderer')).toHaveTextContent('1')
+
     fireEvent.click(screen.getByTitle('Stop'))
 
-    await waitFor(() => {
-      expect(useAnimationStore.getState().isPlaying).toBe(false)
-      expect(useAnimationStore.getState().currentFrame).toBe(0)
-    })
+    expect(screen.getByTestId('sprite-renderer')).toHaveTextContent('0')
 
     fireEvent.click(screen.getByTitle('Play'))
 
-    await waitFor(() => {
-      expect(useAnimationStore.getState().isPlaying).toBe(true)
-    })
+    flushAnimationFrame(120)
+    expect(screen.getByTestId('sprite-renderer')).toHaveTextContent('1')
 
     fireEvent.click(screen.getByRole('switch', { name: 'Loop' }))
 
-    await waitFor(() => {
-      expect(useAnimationStore.getState().frameGroup?.loopCount).toBe(1)
-    })
+    expect(screen.getByRole('switch', { name: 'Loop' })).toHaveAttribute('aria-checked', 'false')
   })
 })

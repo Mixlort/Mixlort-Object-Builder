@@ -12,14 +12,34 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useAppStore, selectClientInfo, selectSpriteCount } from '../../stores'
 import { useEditorStore, selectEditingThingData } from '../../stores'
-import { useAnimationStore } from '../../stores'
 import { ThingCategory } from '../../types/things'
-import { cloneFrameGroup, FrameGroupType as FGT } from '../../types/animation'
-import type { FrameGroupType } from '../../types/animation'
+import {
+  cloneFrameGroup,
+  FrameGroupType as FGT,
+  getFrameDurationValue,
+  type FrameGroupType,
+  type FrameGroup
+} from '../../types'
 import { SpriteRenderer } from '../sprites'
 import { createOutfitData, type OutfitData } from '../../services/sprite-render'
 import { HSIColorPicker } from './HSIColorPicker'
 import { useTranslation } from 'react-i18next'
+
+const DEFAULT_FRAME_DURATION_MS = 100
+const PLAYBACK_FORWARD = 0
+const PLAYBACK_BACKWARD = 1
+
+function resolvePreviewFrameDuration(frameGroup: FrameGroup, frameIndex: number): number {
+  if (
+    frameGroup.frameDurations &&
+    frameIndex >= 0 &&
+    frameIndex < frameGroup.frameDurations.length
+  ) {
+    return getFrameDurationValue(frameGroup.frameDurations[frameIndex])
+  }
+
+  return DEFAULT_FRAME_DURATION_MS
+}
 
 // ---------------------------------------------------------------------------
 // InfoSection
@@ -87,21 +107,28 @@ function PreviewSection({
   const { t } = useTranslation()
   const editingThingData = useEditorStore(selectEditingThingData)
   const currentCategory = useAppStore((s) => s.currentCategory)
-  const isPlaying = useAnimationStore((s) => s.isPlaying)
-  const currentFrame = useAnimationStore((s) => s.currentFrame)
 
   const [frameGroupType, setFrameGroupType] = useState<FrameGroupType>(FGT.DEFAULT)
   const [zoomed, setZoomed] = useState(true)
   const [effectLoopEnabled, setEffectLoopEnabled] = useState(true)
+  const [currentFrame, setCurrentFrame] = useState(0)
+  const [isPlaying, setIsPlaying] = useState(false)
+  const [isComplete, setIsComplete] = useState(false)
 
-  const animFrameRef = useRef<number>(0)
+  const intervalRef = useRef<number | null>(null)
+  const currentFrameRef = useRef(0)
+  const currentFrameRemainingRef = useRef(0)
+  const playbackDirectionRef = useRef(PLAYBACK_FORWARD)
+  const currentLoopRef = useRef(0)
 
   const isOutfit = currentCategory === ThingCategory.OUTFIT
 
   // Reset state & auto-play when thing changes
   useEffect(() => {
     if (!editingThingData) {
-      useAnimationStore.getState().clearFrameGroup()
+      setCurrentFrame(0)
+      setIsPlaying(false)
+      setIsComplete(false)
       return
     }
 
@@ -115,63 +142,153 @@ function PreviewSection({
     setEffectLoopEnabled(thing.category === ThingCategory.EFFECT)
   }, [editingThingData, isOutfit])
 
-  // Sync preview animation source when selection, frame group, or effect loop mode changes
-  useEffect(() => {
-    if (!editingThingData) return
+  const thing = editingThingData?.thing ?? null
+  const hasWalking = isOutfit && !!thing?.frameGroups && thing.frameGroups.length > 1
+  const sourceFrameGroup =
+    thing?.frameGroups?.[frameGroupType === FGT.WALKING ? 1 : 0] ?? thing?.frameGroups?.[0] ?? null
+  const isEffect = thing?.category === ThingCategory.EFFECT
 
-    const thing = editingThingData.thing
-    const sourceFrameGroup =
-      thing.frameGroups?.[frameGroupType === FGT.WALKING ? 1 : 0] ?? thing.frameGroups?.[0]
-
-    if (sourceFrameGroup) {
-      const previewFrameGroup =
-        thing.category === ThingCategory.EFFECT
-          ? (() => {
-              const cloned = cloneFrameGroup(sourceFrameGroup)
-              cloned.loopCount = effectLoopEnabled ? 0 : 1
-              return cloned
-            })()
-          : sourceFrameGroup
-
-      useAnimationStore.getState().setFrameGroup(previewFrameGroup, frameGroupType)
-      useAnimationStore.getState().play()
-    } else {
-      useAnimationStore.getState().clearFrameGroup()
+  const previewFrameGroup = useMemo(() => {
+    if (!sourceFrameGroup) {
+      return null
     }
-  }, [editingThingData, frameGroupType, effectLoopEnabled])
+
+    if (!isEffect) {
+      return sourceFrameGroup
+    }
+
+    const cloned = cloneFrameGroup(sourceFrameGroup)
+    cloned.loopCount = effectLoopEnabled ? 0 : 1
+    return cloned
+  }, [sourceFrameGroup, isEffect, effectLoopEnabled])
+
+  const hasAnimation = previewFrameGroup !== null && previewFrameGroup.frames > 1
+
+  // Reset local preview playback when source changes
+  useEffect(() => {
+    if (intervalRef.current !== null) {
+      window.clearInterval(intervalRef.current)
+      intervalRef.current = null
+    }
+    playbackDirectionRef.current = PLAYBACK_FORWARD
+    currentLoopRef.current = 0
+    currentFrameRef.current = 0
+    setCurrentFrame(0)
+    setIsComplete(false)
+
+    if (previewFrameGroup) {
+      currentFrameRemainingRef.current = resolvePreviewFrameDuration(previewFrameGroup, 0)
+      setIsPlaying(previewFrameGroup.frames > 1)
+    } else {
+      currentFrameRemainingRef.current = 0
+      setIsPlaying(false)
+    }
+  }, [previewFrameGroup])
 
   // Animation playback loop
   useEffect(() => {
-    if (!isPlaying) return
+    if (!isPlaying || !previewFrameGroup) return
 
-    const tick = (time: number) => {
-      useAnimationStore.getState().update(time)
-      animFrameRef.current = requestAnimationFrame(tick)
-    }
-    animFrameRef.current = requestAnimationFrame(tick)
+    intervalRef.current = window.setInterval(() => {
+      let remaining = currentFrameRemainingRef.current - 16
+      let frame = currentFrameRef.current
+      let loop = currentLoopRef.current
+      let direction = playbackDirectionRef.current
+      let complete = false
+
+      while (remaining <= 0 && !complete) {
+        if (previewFrameGroup.loopCount < 0) {
+          if (direction === PLAYBACK_FORWARD) {
+            if (frame >= previewFrameGroup.frames - 1) {
+              direction = PLAYBACK_BACKWARD
+              frame = Math.max(0, previewFrameGroup.frames - 2)
+            } else {
+              frame++
+            }
+          } else if (frame <= 0) {
+            direction = PLAYBACK_FORWARD
+            frame = Math.min(1, previewFrameGroup.frames - 1)
+            loop++
+            if (Math.abs(previewFrameGroup.loopCount) > 0 && loop >= Math.abs(previewFrameGroup.loopCount)) {
+              complete = true
+              frame = 0
+            }
+          } else {
+            frame--
+          }
+        } else {
+          frame++
+          if (frame >= previewFrameGroup.frames) {
+            frame = 0
+            loop++
+            if (previewFrameGroup.loopCount > 0 && loop >= previewFrameGroup.loopCount) {
+              complete = true
+              frame = previewFrameGroup.frames - 1
+            }
+          }
+        }
+
+        remaining += resolvePreviewFrameDuration(previewFrameGroup, frame)
+      }
+
+      currentLoopRef.current = loop
+      playbackDirectionRef.current = direction
+      currentFrameRemainingRef.current = Math.max(0, remaining)
+      currentFrameRef.current = frame
+      setCurrentFrame(frame)
+      setIsComplete(complete)
+
+      if (complete) {
+        setIsPlaying(false)
+        if (intervalRef.current !== null) {
+          window.clearInterval(intervalRef.current)
+          intervalRef.current = null
+        }
+      }
+    }, 16)
 
     return () => {
-      cancelAnimationFrame(animFrameRef.current)
+      if (intervalRef.current !== null) {
+        window.clearInterval(intervalRef.current)
+        intervalRef.current = null
+      }
     }
-  }, [isPlaying])
+  }, [isPlaying, previewFrameGroup])
 
   const handlePlay = useCallback(() => {
-    useAnimationStore.getState().play()
-  }, [])
+    if (!previewFrameGroup || previewFrameGroup.frames <= 1) return
+
+    if (isComplete) {
+      playbackDirectionRef.current = PLAYBACK_FORWARD
+      currentLoopRef.current = 0
+      currentFrameRemainingRef.current = resolvePreviewFrameDuration(previewFrameGroup, 0)
+      currentFrameRef.current = 0
+      setCurrentFrame(0)
+      setIsComplete(false)
+    }
+
+    setIsPlaying(true)
+  }, [previewFrameGroup, isComplete])
 
   const handlePause = useCallback(() => {
-    useAnimationStore.getState().pause()
+    setIsPlaying(false)
   }, [])
 
   const handleStop = useCallback(() => {
-    useAnimationStore.getState().stop()
-  }, [])
-
-  const thing = editingThingData?.thing ?? null
-  const hasWalking = isOutfit && !!thing?.frameGroups && thing.frameGroups.length > 1
-  const fg = thing?.frameGroups?.[frameGroupType === FGT.WALKING ? 1 : 0] ?? thing?.frameGroups?.[0]
-  const hasAnimation = fg !== undefined && fg.frames > 1
-  const isEffect = thing?.category === ThingCategory.EFFECT
+    if (intervalRef.current !== null) {
+      window.clearInterval(intervalRef.current)
+      intervalRef.current = null
+    }
+    playbackDirectionRef.current = PLAYBACK_FORWARD
+    currentLoopRef.current = 0
+    currentFrameRef.current = 0
+    currentFrameRemainingRef.current = previewFrameGroup
+      ? resolvePreviewFrameDuration(previewFrameGroup, 0)
+      : 0
+    setCurrentFrame(0)
+    setIsPlaying(false)
+    setIsComplete(false)
+  }, [previewFrameGroup])
 
   if (!editingThingData || !thing) return null
 
