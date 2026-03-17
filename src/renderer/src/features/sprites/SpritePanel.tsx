@@ -485,6 +485,17 @@ export function SpritePanel({
     (e: React.KeyboardEvent) => {
       if (!editingThingData || !frameGroup || spriteIndex.length === 0) return
 
+      const target = e.target as HTMLElement | null
+      if (
+        target &&
+        (target.tagName === 'INPUT' ||
+          target.tagName === 'TEXTAREA' ||
+          target.tagName === 'SELECT' ||
+          target.isContentEditable)
+      ) {
+        return
+      }
+
       const isMod = e.ctrlKey || e.metaKey
 
       // Ctrl+C: Copy selected sprite

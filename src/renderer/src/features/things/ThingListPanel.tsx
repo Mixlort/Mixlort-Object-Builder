@@ -841,6 +841,17 @@ export function ThingListPanel({
     (e: React.KeyboardEvent) => {
       if (!isLoaded || filteredThings.length === 0) return
 
+      const target = e.target as HTMLElement | null
+      if (
+        target &&
+        (target.tagName === 'INPUT' ||
+          target.tagName === 'TEXTAREA' ||
+          target.tagName === 'SELECT' ||
+          target.isContentEditable)
+      ) {
+        return
+      }
+
       // Ctrl+C: Copy based on clipboardAction setting
       if ((e.ctrlKey || e.metaKey) && e.key === 'c') {
         e.preventDefault()

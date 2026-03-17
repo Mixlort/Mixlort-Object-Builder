@@ -6,7 +6,7 @@
 
 import React from 'react'
 import { describe, it, expect, beforeEach, vi } from 'vitest'
-import { render, screen, fireEvent, act } from '@testing-library/react'
+import { render, screen, fireEvent, act, createEvent } from '@testing-library/react'
 import { ThingListPanel } from '../ThingListPanel'
 import { resetAppStore, useAppStore, resetEditorStore } from '../../../stores'
 import { ThingCategory, createThingType, createClientInfo } from '../../../types'
@@ -275,6 +275,23 @@ describe('ThingListPanel', () => {
       render(<ThingListPanel />)
       const input = screen.getByTestId('thing-search-input')
       expect(input).toBeDisabled()
+    })
+
+    it('does not intercept Cmd+V while typing in the search input', () => {
+      loadProjectWithThings()
+      render(<ThingListPanel />)
+
+      const input = screen.getByTestId('thing-search-input')
+      const preventDefault = vi.fn()
+      const event = createEvent.keyDown(input, {
+        key: 'v',
+        metaKey: true
+      })
+      event.preventDefault = preventDefault
+
+      fireEvent(input, event)
+
+      expect(preventDefault).not.toHaveBeenCalled()
     })
   })
 
