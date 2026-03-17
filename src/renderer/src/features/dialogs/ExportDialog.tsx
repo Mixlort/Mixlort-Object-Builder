@@ -40,6 +40,7 @@ export interface ExportDialogResult {
   obdVersion: number
   effectIdFilterEnabled: boolean
   effectIdFilterInput: string
+  effectUseOriginalIdsInFileNames: boolean
 }
 
 export interface ExportDialogProps {
@@ -84,6 +85,7 @@ export function ExportDialog({
   const [obdVersion, setObdVersion] = useState(OBDVersion.VERSION_3)
   const [effectIdFilterEnabled, setEffectIdFilterEnabled] = useState(false)
   const [effectIdFilterInput, setEffectIdFilterInput] = useState('')
+  const [effectUseOriginalIdsInFileNames, setEffectUseOriginalIdsInFileNames] = useState(false)
 
   // Reset on open (render-time state adjustment)
   const [prevOpen, setPrevOpen] = useState(false)
@@ -96,6 +98,7 @@ export function ExportDialog({
     setObdVersion(OBDVersion.VERSION_3)
     setEffectIdFilterEnabled(false)
     setEffectIdFilterInput('')
+    setEffectUseOriginalIdsInFileNames(false)
   }
   if (open !== prevOpen) {
     setPrevOpen(open)
@@ -141,7 +144,8 @@ export function ExportDialog({
       version: format === OTFormat.OBD ? selectedVersion : null,
       obdVersion: format === OTFormat.OBD ? obdVersion : 0,
       effectIdFilterEnabled,
-      effectIdFilterInput
+      effectIdFilterInput,
+      effectUseOriginalIdsInFileNames
     })
     onClose()
   }, [
@@ -154,6 +158,7 @@ export function ExportDialog({
     obdVersion,
     effectIdFilterEnabled,
     effectIdFilterInput,
+    effectUseOriginalIdsInFileNames,
     onConfirm,
     onClose
   ])
@@ -303,6 +308,13 @@ export function ExportDialog({
               value={effectIdFilterInput}
               onChange={(event) => setEffectIdFilterInput(event.target.value)}
               placeholder="Ex: 1, 5, 10-15"
+              disabled={!effectIdFilterEnabled}
+            />
+
+            <CheckboxField
+              label="Usar IDs originais no nome dos arquivos"
+              checked={effectUseOriginalIdsInFileNames}
+              onChange={setEffectUseOriginalIdsInFileNames}
               disabled={!effectIdFilterEnabled}
             />
 

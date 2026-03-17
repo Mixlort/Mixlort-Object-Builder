@@ -66,6 +66,10 @@ function toggleEffectIdFilter() {
   fireEvent.click(screen.getByLabelText('Exportar IDs específicos (effects)'))
 }
 
+function toggleOriginalEffectIdsInFileNames() {
+  fireEvent.click(screen.getByLabelText('Usar IDs originais no nome dos arquivos'))
+}
+
 async function browseDirectory() {
   const browseBtn = screen.getByText('Browse')
   fireEvent.click(browseBtn)
@@ -117,6 +121,7 @@ describe('ExportDialog', () => {
     renderDialog()
     expect(screen.getByLabelText('Exportar IDs específicos (effects)')).toBeInTheDocument()
     expect(screen.getByPlaceholderText('Ex: 1, 5, 10-15')).toBeDisabled()
+    expect(screen.getByLabelText('Usar IDs originais no nome dos arquivos')).toBeDisabled()
   })
 
   it('PNG is selected by default', () => {
@@ -243,6 +248,7 @@ describe('ExportDialog', () => {
     expect(result.obdVersion).toBe(0) // 0 for non-OBD
     expect(result.effectIdFilterEnabled).toBe(false)
     expect(result.effectIdFilterInput).toBe('')
+    expect(result.effectUseOriginalIdsInFileNames).toBe(false)
     expect(onClose).toHaveBeenCalledTimes(1)
   })
 
@@ -250,6 +256,7 @@ describe('ExportDialog', () => {
     renderDialog()
     toggleEffectIdFilter()
     expect(screen.getByPlaceholderText('Ex: 1, 5, 10-15')).not.toBeDisabled()
+    expect(screen.getByLabelText('Usar IDs originais no nome dos arquivos')).not.toBeDisabled()
   })
 
   it('shows validation error and disables export for invalid token', async () => {
@@ -286,6 +293,7 @@ describe('ExportDialog', () => {
     await browseDirectory()
     toggleEffectIdFilter()
     setEffectIdList('1, 5, 10-12')
+    toggleOriginalEffectIdsInFileNames()
 
     const exportBtn = screen.getAllByText('Export')[1]
     fireEvent.click(exportBtn)
@@ -293,6 +301,7 @@ describe('ExportDialog', () => {
     const result = onConfirm.mock.calls[0][0]
     expect(result.effectIdFilterEnabled).toBe(true)
     expect(result.effectIdFilterInput).toBe('1, 5, 10-12')
+    expect(result.effectUseOriginalIdsInFileNames).toBe(true)
   })
 
   it('confirm with JPG format includes jpeg quality', async () => {

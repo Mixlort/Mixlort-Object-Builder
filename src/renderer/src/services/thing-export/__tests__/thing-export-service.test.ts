@@ -114,6 +114,7 @@ describe('thing-export-service', () => {
       directory: '/tmp/out',
       fileNamePrefix: 'effect',
       format: ImageFormat.PNG,
+      effectUseOriginalIdsInFileNames: false,
       encodeThing,
       writeBinary,
       writeText
@@ -151,6 +152,7 @@ describe('thing-export-service', () => {
       directory: '/tmp/out',
       fileNamePrefix: 'ignored-for-effects',
       format: ImageFormat.BMP,
+      effectUseOriginalIdsInFileNames: false,
       encodeThing,
       writeBinary,
       writeText
@@ -158,6 +160,45 @@ describe('thing-export-service', () => {
 
     expect(writeBinary).toHaveBeenCalledWith('/tmp/out/7.bmp', expect.any(ArrayBuffer))
     expect(writeText).not.toHaveBeenCalled()
+  })
+
+  it('can use original effect ids in file names when filter is active', async () => {
+    const plan = createThingExportPlan({
+      category: ThingCategory.EFFECT,
+      selectedThingIds: [],
+      things: {
+        items: [],
+        outfits: [],
+        effects: [
+          makeThing(1, ThingCategory.EFFECT),
+          makeThing(7, ThingCategory.EFFECT),
+          makeThing(9, ThingCategory.EFFECT)
+        ],
+        missiles: []
+      },
+      effectIdFilterEnabled: true,
+      effectIdFilterInput: '1,7,9'
+    })
+
+    const writeBinary = vi.fn().mockResolvedValue(undefined)
+    const writeText = vi.fn().mockResolvedValue(undefined)
+    const encodeThing = vi.fn().mockResolvedValue(new Uint8Array([1, 2, 3]).buffer)
+
+    await exportThingPlanToFiles({
+      plan,
+      directory: '/tmp/out',
+      fileNamePrefix: 'ignored-for-effects',
+      format: ImageFormat.PNG,
+      effectUseOriginalIdsInFileNames: true,
+      encodeThing,
+      writeBinary,
+      writeText
+    })
+
+    expect(writeBinary).toHaveBeenNthCalledWith(1, '/tmp/out/1.png', expect.any(ArrayBuffer))
+    expect(writeBinary).toHaveBeenNthCalledWith(2, '/tmp/out/7.png', expect.any(ArrayBuffer))
+    expect(writeBinary).toHaveBeenNthCalledWith(3, '/tmp/out/9.png', expect.any(ArrayBuffer))
+    expect(writeText).toHaveBeenCalledWith('/tmp/out/effects-id-map.json', expect.any(String))
   })
 
   it('does not create map file when no effects filter map exists', async () => {
@@ -183,6 +224,7 @@ describe('thing-export-service', () => {
       directory: '/tmp/out',
       fileNamePrefix: 'item',
       format: ImageFormat.BMP,
+      effectUseOriginalIdsInFileNames: true,
       encodeThing,
       writeBinary,
       writeText

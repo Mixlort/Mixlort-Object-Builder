@@ -42,6 +42,7 @@ export interface ExportThingPlanParams {
   directory: string
   fileNamePrefix: string
   format: ThingExportFormat
+  effectUseOriginalIdsInFileNames?: boolean
   encodeThing: (entry: ThingExportEntry) => Promise<ArrayBuffer>
   writeBinary: (path: string, data: ArrayBuffer) => Promise<void>
   writeText: (path: string, text: string) => Promise<void>
@@ -103,10 +104,12 @@ function getExportExtension(format: ThingExportFormat): string {
 function getExportFileName(
   entry: ThingExportEntry,
   extension: string,
-  fileNamePrefix: string
+  fileNamePrefix: string,
+  effectUseOriginalIdsInFileNames: boolean
 ): string {
   if (entry.thing.category === TC.EFFECT) {
-    return `${entry.exportId}.${extension}`
+    const effectFileId = effectUseOriginalIdsInFileNames ? entry.sourceId : entry.exportId
+    return `${effectFileId}.${extension}`
   }
 
   return `${fileNamePrefix}_${entry.exportId}.${extension}`
@@ -162,13 +165,27 @@ export function createThingExportPlan(params: CreateThingExportPlanParams): Thin
 export async function exportThingPlanToFiles(
   params: ExportThingPlanParams
 ): Promise<ExportThingPlanResult> {
-  const { plan, directory, fileNamePrefix, format, encodeThing, writeBinary, writeText } = params
+  const {
+    plan,
+    directory,
+    fileNamePrefix,
+    format,
+    effectUseOriginalIdsInFileNames = false,
+    encodeThing,
+    writeBinary,
+    writeText
+  } = params
 
   const extension = getExportExtension(format)
   const writtenFiles: string[] = []
 
   for (const entry of plan.entries) {
-    const fileName = getExportFileName(entry, extension, fileNamePrefix)
+    const fileName = getExportFileName(
+      entry,
+      extension,
+      fileNamePrefix,
+      effectUseOriginalIdsInFileNames
+    )
     const fullPath = joinPath(directory, fileName)
     const data = await encodeThing(entry)
     await writeBinary(fullPath, data)

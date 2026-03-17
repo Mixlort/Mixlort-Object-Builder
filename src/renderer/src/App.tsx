@@ -1167,6 +1167,7 @@ export function App(): React.JSX.Element {
           directory: result.directory,
           fileNamePrefix: result.fileName,
           format: result.format,
+          effectUseOriginalIdsInFileNames: result.effectUseOriginalIdsInFileNames,
           encodeThing,
           writeBinary: (filePath, data) => window.api.file.writeBinary(filePath, data),
           writeText: (filePath, text) => window.api.file.writeText(filePath, text)
