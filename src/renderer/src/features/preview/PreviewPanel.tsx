@@ -14,7 +14,7 @@ import { useAppStore, selectClientInfo, selectSpriteCount } from '../../stores'
 import { useEditorStore, selectEditingThingData } from '../../stores'
 import { useAnimationStore } from '../../stores'
 import { ThingCategory } from '../../types/things'
-import { FrameGroupType as FGT } from '../../types/animation'
+import { cloneFrameGroup, FrameGroupType as FGT } from '../../types/animation'
 import type { FrameGroupType } from '../../types/animation'
 import { SpriteRenderer } from '../sprites'
 import { createOutfitData, type OutfitData } from '../../services/sprite-render'
@@ -89,11 +89,10 @@ function PreviewSection({
   const currentCategory = useAppStore((s) => s.currentCategory)
   const isPlaying = useAnimationStore((s) => s.isPlaying)
   const currentFrame = useAnimationStore((s) => s.currentFrame)
-  const isComplete = useAnimationStore((s) => s.isComplete)
 
   const [frameGroupType, setFrameGroupType] = useState<FrameGroupType>(FGT.DEFAULT)
-  const [zoomed, setZoomed] = useState(false)
-  const [effectLoopEnabled, setEffectLoopEnabled] = useState(false)
+  const [zoomed, setZoomed] = useState(true)
+  const [effectLoopEnabled, setEffectLoopEnabled] = useState(true)
 
   const animFrameRef = useRef<number>(0)
 
@@ -112,34 +111,34 @@ function PreviewSection({
     const hasWalking = isOutfit && thing.frameGroups && thing.frameGroups.length > 1
     const defaultFgt = hasWalking ? FGT.WALKING : FGT.DEFAULT
     setFrameGroupType(defaultFgt)
-    setZoomed(false)
-    setEffectLoopEnabled(false)
-
-    const fg = thing.frameGroups?.[defaultFgt === FGT.WALKING ? 1 : 0] ?? thing.frameGroups?.[0]
-    if (fg) {
-      useAnimationStore.getState().setFrameGroup(fg, defaultFgt)
-      // Auto-play animation
-      useAnimationStore.getState().play()
-    } else {
-      useAnimationStore.getState().clearFrameGroup()
-    }
+    setZoomed(true)
+    setEffectLoopEnabled(thing.category === ThingCategory.EFFECT)
   }, [editingThingData, isOutfit])
 
-  // Sync frame group type changes (after initial load)
+  // Sync preview animation source when selection, frame group, or effect loop mode changes
   useEffect(() => {
     if (!editingThingData) return
 
     const thing = editingThingData.thing
-    const fg = thing.frameGroups?.[frameGroupType === FGT.WALKING ? 1 : 0] ?? thing.frameGroups?.[0]
-    if (fg) {
-      useAnimationStore.getState().setFrameGroup(fg, frameGroupType)
+    const sourceFrameGroup =
+      thing.frameGroups?.[frameGroupType === FGT.WALKING ? 1 : 0] ?? thing.frameGroups?.[0]
+
+    if (sourceFrameGroup) {
+      const previewFrameGroup =
+        thing.category === ThingCategory.EFFECT
+          ? (() => {
+              const cloned = cloneFrameGroup(sourceFrameGroup)
+              cloned.loopCount = effectLoopEnabled ? 0 : 1
+              return cloned
+            })()
+          : sourceFrameGroup
+
+      useAnimationStore.getState().setFrameGroup(previewFrameGroup, frameGroupType)
       useAnimationStore.getState().play()
     } else {
       useAnimationStore.getState().clearFrameGroup()
     }
-    // Only react to manual frameGroupType changes, not editingThingData
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [frameGroupType])
+  }, [editingThingData, frameGroupType, effectLoopEnabled])
 
   // Animation playback loop
   useEffect(() => {
@@ -173,11 +172,6 @@ function PreviewSection({
   const fg = thing?.frameGroups?.[frameGroupType === FGT.WALKING ? 1 : 0] ?? thing?.frameGroups?.[0]
   const hasAnimation = fg !== undefined && fg.frames > 1
   const isEffect = thing?.category === ThingCategory.EFFECT
-
-  useEffect(() => {
-    if (!editingThingData || !isEffect || !effectLoopEnabled || !hasAnimation || !isComplete) return
-    useAnimationStore.getState().play()
-  }, [editingThingData, isEffect, effectLoopEnabled, hasAnimation, isComplete])
 
   if (!editingThingData || !thing) return null
 

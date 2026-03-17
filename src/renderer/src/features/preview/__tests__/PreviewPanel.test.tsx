@@ -85,7 +85,7 @@ describe('PreviewPanel', () => {
     expect(screen.getByTestId('sprite-renderer')).toBeInTheDocument()
   })
 
-  it('keeps animated effects playable and restarts them when loop is enabled', async () => {
+  it('keeps animated effects playable and enables zoom and loop by default', async () => {
     const { clientInfo, thingData } = makeAnimatedEffectThingData()
 
     act(() => {
@@ -99,7 +99,11 @@ describe('PreviewPanel', () => {
     await waitFor(() => {
       expect(useAnimationStore.getState().frameGroup?.frames).toBe(2)
       expect(useAnimationStore.getState().isPlaying).toBe(true)
+      expect(useAnimationStore.getState().frameGroup?.loopCount).toBe(0)
     })
+
+    expect(screen.getByRole('switch', { name: 'Zoom' })).toHaveAttribute('aria-checked', 'true')
+    expect(screen.getByRole('switch', { name: 'Loop' })).toHaveAttribute('aria-checked', 'true')
 
     fireEvent.click(screen.getByTitle('Stop'))
 
@@ -116,17 +120,8 @@ describe('PreviewPanel', () => {
 
     fireEvent.click(screen.getByRole('switch', { name: 'Loop' }))
 
-    act(() => {
-      useAnimationStore.setState({
-        isPlaying: false,
-        isComplete: true,
-        currentFrame: 1
-      })
-    })
-
     await waitFor(() => {
-      expect(useAnimationStore.getState().isPlaying).toBe(true)
-      expect(useAnimationStore.getState().isComplete).toBe(false)
+      expect(useAnimationStore.getState().frameGroup?.loopCount).toBe(1)
     })
   })
 })
