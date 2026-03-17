@@ -24,6 +24,7 @@ import {
   getItemByServerId,
   getItemsByClientId,
   getFirstItemByClientId,
+  applyServerItemNames,
   setAttributeServer,
   getAttributeServerName,
   unloadServerItems,
@@ -950,6 +951,56 @@ describe('server-items-service', () => {
 
       expect(getFirstItemByClientId(50)).toBeDefined()
       expect(getFirstItemByClientId(999)).toBeUndefined()
+    })
+  })
+
+  describe('applyServerItemNames', () => {
+    it('should apply items.xml name to thing.name', () => {
+      const item = createServerItem()
+      item.id = 100
+      item.clientId = 100
+      item.name = 'otb sword'
+      const buffer = makeOtbBuffer([item])
+      const xml = '<?xml version="1.0"?><items><item id="100" name="xml sword" /></items>'
+
+      loadServerItems({ otbBuffer: buffer, xmlContent: xml })
+
+      const thing = makeThingType({ id: 100, name: '' })
+      const result = applyServerItemNames([thing])
+
+      expect(result[0]).not.toBe(thing)
+      expect(result[0].name).toBe('xml sword')
+    })
+
+    it('should fall back to OTB name when XML name is missing', () => {
+      const item = createServerItem()
+      item.id = 100
+      item.clientId = 100
+      item.name = 'otb sword'
+      const buffer = makeOtbBuffer([item])
+
+      loadServerItems({ otbBuffer: buffer })
+
+      const thing = makeThingType({ id: 100, name: '' })
+      const result = applyServerItemNames([thing])
+
+      expect(result[0].name).toBe('otb sword')
+    })
+
+    it('should keep original thing array when nothing changes', () => {
+      const item = createServerItem()
+      item.id = 100
+      item.clientId = 100
+      item.name = 'same name'
+      const buffer = makeOtbBuffer([item])
+
+      loadServerItems({ otbBuffer: buffer })
+
+      const thing = makeThingType({ id: 100, name: 'same name' })
+      const result = applyServerItemNames([thing])
+
+      expect(result).toEqual([thing])
+      expect(result[0]).toBe(thing)
     })
   })
 

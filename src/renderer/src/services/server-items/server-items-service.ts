@@ -9,7 +9,7 @@
  * and OtbSync usage.
  */
 
-import { type ThingType, type ServerItem } from '../../types'
+import { type ThingType, type ServerItem, cloneThingType } from '../../types'
 import { readOtb, writeOtb, ServerItemList } from '../otb'
 import { readItemsXml, writeItemsXml, type ItemsXmlWriteOptions } from '../items-xml'
 import {
@@ -310,6 +310,42 @@ export function getItemsByClientId(clientId: number): ServerItem[] {
  */
 export function getFirstItemByClientId(clientId: number): ServerItem | undefined {
   return _itemList?.getFirstItemByClientId(clientId)
+}
+
+function getServerItemDisplayName(item: ServerItem | undefined): string {
+  if (!item) return ''
+
+  const xmlName = item.xmlAttributes?.['name']
+  if (typeof xmlName === 'string' && xmlName.trim().length > 0) {
+    return xmlName.trim()
+  }
+
+  return item.name.trim()
+}
+
+/**
+ * Applies server item display names to client ThingTypes.
+ * Priority: items.xml `name` attribute, then OTB name attribute.
+ */
+export function applyServerItemNames(thingTypes: ThingType[]): ThingType[] {
+  if (!_itemList || thingTypes.length === 0) {
+    return thingTypes
+  }
+
+  let changed = false
+  const decorated = thingTypes.map((thing) => {
+    const displayName = getServerItemDisplayName(_itemList?.getFirstItemByClientId(thing.id))
+    if (!displayName || displayName === thing.name) {
+      return thing
+    }
+
+    const updated = cloneThingType(thing)
+    updated.name = displayName
+    changed = true
+    return updated
+  })
+
+  return changed ? decorated : thingTypes
 }
 
 /**

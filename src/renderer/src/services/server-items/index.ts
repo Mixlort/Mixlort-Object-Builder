@@ -22,6 +22,7 @@ export {
   getItemByServerId,
   getItemsByClientId,
   getFirstItemByClientId,
+  applyServerItemNames,
   setAttributeServer,
   unloadServerItems,
   resetServerItemsService

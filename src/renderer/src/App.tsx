@@ -103,6 +103,7 @@ import {
   loadServerItems,
   saveServerItems,
   isLoaded as isServerItemsLoaded,
+  applyServerItemNames,
   unloadServerItems,
   setAttributeServer
 } from './services/server-items'
@@ -702,6 +703,8 @@ export function App(): React.JSX.Element {
           loadedFileName: fileName
         }
 
+        const loadedItems = otbInfo ? applyServerItemNames(datResult.items) : datResult.items
+
         // Populate stores
         const appState = useAppStore.getState()
         appState.setProjectLoaded({
@@ -713,7 +716,7 @@ export function App(): React.JSX.Element {
           datFilePath: result.datFile,
           sprFilePath: result.sprFile
         })
-        appState.setThings(ThingCategory.ITEM, datResult.items)
+        appState.setThings(ThingCategory.ITEM, loadedItems)
         appState.setThings(ThingCategory.OUTFIT, datResult.outfits)
         appState.setThings(ThingCategory.EFFECT, datResult.effects)
         appState.setThings(ThingCategory.MISSILE, datResult.missiles)
