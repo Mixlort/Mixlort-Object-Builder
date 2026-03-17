@@ -161,6 +161,21 @@ function buildViewMenu(): MenuItemConstructorOptions {
   }
 }
 
+function buildEditMenu(): MenuItemConstructorOptions {
+  return {
+    label: 'Edit',
+    submenu: [
+      { role: 'undo' },
+      { role: 'redo' },
+      { type: 'separator' },
+      { role: 'cut' },
+      { role: 'copy' },
+      { role: 'paste' },
+      { role: 'selectAll' }
+    ]
+  }
+}
+
 function buildToolsMenu(): MenuItemConstructorOptions {
   return {
     label: 'Tools',
@@ -321,6 +336,7 @@ export function buildApplicationMenu(): void {
   const template: MenuItemConstructorOptions[] = [
     ...(isMac ? [buildMacAppMenu()] : []),
     buildFileMenu(),
+    buildEditMenu(),
     buildViewMenu(),
     buildToolsMenu(),
     buildWindowMenu(),

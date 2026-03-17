@@ -143,6 +143,7 @@ describe('Menu Building', () => {
     const labels = template.map((m) => m.label)
 
     expect(labels).toContain('File')
+    expect(labels).toContain('Edit')
     expect(labels).toContain('View')
     expect(labels).toContain('Tools')
     expect(labels).toContain('Window')
@@ -219,6 +220,20 @@ describe('Menu Building', () => {
 
     const item = findSubmenuItem('Help', 'Help Contents')
     expect(item?.enabled).toBe(false)
+  })
+
+  it('Edit menu contains native clipboard roles', () => {
+    buildApplicationMenu()
+
+    const items = findAllSubmenuItems('Edit')
+    const roles = items
+      .filter((item) => item.type !== 'separator')
+      .map((item) => item.role)
+
+    expect(roles).toContain('cut')
+    expect(roles).toContain('copy')
+    expect(roles).toContain('paste')
+    expect(roles).toContain('selectAll')
   })
 })
 
