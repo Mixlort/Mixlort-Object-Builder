@@ -65,7 +65,7 @@ const GRID_CELL_HEIGHT = 71
 const OVERSCAN = 5
 
 /** Default page size matching legacy objectsListAmount setting */
-const PAGE_SIZE = 100
+const DEFAULT_PAGE_SIZE = 100
 
 type ViewMode = 'list' | 'grid'
 
@@ -173,11 +173,13 @@ export type ThingListAction = 'replace' | 'import' | 'export' | 'find'
 interface ThingListPanelProps {
   onEditThing?: (thingId: number) => void
   onAction?: (action: ThingListAction) => void
+  pageSize?: number
 }
 
 export function ThingListPanel({
   onEditThing,
-  onAction
+  onAction,
+  pageSize = DEFAULT_PAGE_SIZE
 }: ThingListPanelProps = {}): React.JSX.Element {
   const { t } = useTranslation()
   const [viewMode, setViewMode] = useState<ViewMode>('list')
@@ -226,6 +228,7 @@ export function ThingListPanel({
   const addThing = useAppStore((s) => s.addThing)
   const getThingById = useAppStore((s) => s.getThingById)
   const clientInfo = useAppStore((s) => s.clientInfo)
+  const resolvedPageSize = Math.max(1, pageSize)
 
   // -------------------------------------------------------------------------
   // Derived data
@@ -265,7 +268,7 @@ export function ThingListPanel({
   // Pagination
   // -------------------------------------------------------------------------
 
-  const totalPages = Math.max(1, Math.ceil(filteredThings.length / PAGE_SIZE))
+  const totalPages = Math.max(1, Math.ceil(filteredThings.length / resolvedPageSize))
 
   // Clamp current page to valid range when filtered list changes
   const safePage = Math.min(currentPage, totalPages - 1)
@@ -274,8 +277,8 @@ export function ThingListPanel({
     Promise.resolve().then(() => setCurrentPage(safePage))
   }
 
-  const pageStart = safePage * PAGE_SIZE
-  const pageEnd = Math.min(pageStart + PAGE_SIZE, filteredThings.length)
+  const pageStart = safePage * resolvedPageSize
+  const pageEnd = Math.min(pageStart + resolvedPageSize, filteredThings.length)
   const pageThings = useMemo(
     () => filteredThings.slice(pageStart, pageEnd),
     [filteredThings, pageStart, pageEnd]
@@ -331,12 +334,12 @@ export function ThingListPanel({
       const thing = filteredThings[bestIdx]
       selectThing(thing.id)
 
-      const page = Math.floor(bestIdx / PAGE_SIZE)
+      const page = Math.floor(bestIdx / resolvedPageSize)
       setCurrentPage(page)
 
       // Scroll to the thing within the page
       if (scrollRef.current) {
-        const idxInPage = bestIdx - page * PAGE_SIZE
+        const idxInPage = bestIdx - page * resolvedPageSize
         let targetTop: number
         if (viewMode === 'list') {
           targetTop = idxInPage * LIST_ITEM_HEIGHT
@@ -347,7 +350,7 @@ export function ThingListPanel({
         scrollRef.current.scrollTop = Math.max(0, targetTop - containerHeight / 2)
       }
     },
-    [filteredThings, selectThing, viewMode, containerWidth, containerHeight]
+    [filteredThings, selectThing, viewMode, containerWidth, containerHeight, resolvedPageSize]
   )
 
   // -------------------------------------------------------------------------
@@ -896,12 +899,12 @@ export function ThingListPanel({
           selectThing(nextThing.id)
 
           // Auto-navigate to the correct page if needed
-          const targetPage = Math.floor(nextIdx / PAGE_SIZE)
+          const targetPage = Math.floor(nextIdx / resolvedPageSize)
           if (targetPage !== safePage) {
             setCurrentPage(targetPage)
           } else {
             // Scroll into view within current page
-            const idxInPage = nextIdx - safePage * PAGE_SIZE
+            const idxInPage = nextIdx - safePage * resolvedPageSize
             if (scrollRef.current) {
               let itemTop: number
               if (viewMode === 'list') {
@@ -931,7 +934,8 @@ export function ThingListPanel({
       viewMode,
       containerWidth,
       containerHeight,
-      safePage
+      safePage,
+      resolvedPageSize
     ]
   )
 
@@ -1084,7 +1088,7 @@ export function ThingListPanel({
           value={stepperValue}
           min={stepperMin}
           max={stepperMax}
-          pageSize={PAGE_SIZE}
+          pageSize={resolvedPageSize}
           onChange={handleStepperChange}
           disabled={!isLoaded || filteredThings.length === 0}
         />

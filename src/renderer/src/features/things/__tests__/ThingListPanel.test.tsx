@@ -114,6 +114,16 @@ describe('ThingListPanel', () => {
       expect(screen.getByTestId('thing-list-item-101')).toBeInTheDocument()
     })
 
+    it('respects the configured page size for objects', () => {
+      loadProjectWithThings(8)
+      render(<ThingListPanel pageSize={3} />)
+
+      expect(screen.getByTestId('thing-list-item-100')).toBeInTheDocument()
+      expect(screen.getByTestId('thing-list-item-101')).toBeInTheDocument()
+      expect(screen.getByTestId('thing-list-item-102')).toBeInTheDocument()
+      expect(screen.queryByTestId('thing-list-item-103')).not.toBeInTheDocument()
+    })
+
     it('shows pagination stepper in footer when project is loaded', () => {
       loadProjectWithThings(5)
       render(<ThingListPanel />)

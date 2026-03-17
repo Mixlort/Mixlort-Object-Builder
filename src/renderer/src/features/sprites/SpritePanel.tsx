@@ -40,7 +40,7 @@ const CELL_SIZE = 48
 const PREVIEW_SIZE = 96
 
 /** Default page size matching legacy spritesListAmount setting */
-const SPRITE_PAGE_SIZE = 100
+const DEFAULT_SPRITE_PAGE_SIZE = 100
 
 /**
  * Module-level sprite clipboard for copy/paste within the sprite grid.
@@ -244,7 +244,13 @@ function SpritePreview({ spriteId, pixels }: SpritePreviewProps): React.JSX.Elem
 // SpritePanel
 // ---------------------------------------------------------------------------
 
-export function SpritePanel(): React.JSX.Element {
+interface SpritePanelProps {
+  pageSize?: number
+}
+
+export function SpritePanel({
+  pageSize = DEFAULT_SPRITE_PAGE_SIZE
+}: SpritePanelProps): React.JSX.Element {
   const { t } = useTranslation()
   const [selectedSlot, setSelectedSlot] = useState<number | null>(null)
   const [hoveredSlot, setHoveredSlot] = useState<number | null>(null)
@@ -261,6 +267,7 @@ export function SpritePanel(): React.JSX.Element {
   // Track sprite accessor/overrides changes to re-derive sprite slots
   const spriteAccessor = useSpriteStore((s) => s.spriteAccessor)
   const spriteOverrides = useSpriteStore((s) => s.sprites)
+  const resolvedPageSize = Math.max(1, pageSize)
 
   // Derived data
   const thing = editingThingData?.thing
@@ -305,8 +312,8 @@ export function SpritePanel(): React.JSX.Element {
   // Pagination
   // -------------------------------------------------------------------------
 
-  const needsPagination = spriteSlots.length > SPRITE_PAGE_SIZE
-  const totalPages = Math.max(1, Math.ceil(spriteSlots.length / SPRITE_PAGE_SIZE))
+  const needsPagination = spriteSlots.length > resolvedPageSize
+  const totalPages = Math.max(1, Math.ceil(spriteSlots.length / resolvedPageSize))
 
   // Clamp current page
   const safePage = Math.min(currentPage, totalPages - 1)
@@ -316,23 +323,23 @@ export function SpritePanel(): React.JSX.Element {
 
   const pageSlots = useMemo(() => {
     if (!needsPagination) return spriteSlots
-    const start = safePage * SPRITE_PAGE_SIZE
-    const end = Math.min(start + SPRITE_PAGE_SIZE, spriteSlots.length)
+    const start = safePage * resolvedPageSize
+    const end = Math.min(start + resolvedPageSize, spriteSlots.length)
     return spriteSlots.slice(start, end)
-  }, [spriteSlots, needsPagination, safePage])
+  }, [spriteSlots, needsPagination, safePage, resolvedPageSize])
 
   // Stepper value: first slot index on the current page
-  const spriteStepperValue = needsPagination ? safePage * SPRITE_PAGE_SIZE : 0
+  const spriteStepperValue = needsPagination ? safePage * resolvedPageSize : 0
   const spriteStepperMax = Math.max(0, spriteSlots.length - 1)
 
   const handleSpriteStepperChange = useCallback(
     (targetIndex: number) => {
       if (spriteSlots.length === 0) return
       const clamped = Math.max(0, Math.min(spriteSlots.length - 1, targetIndex))
-      const page = Math.floor(clamped / SPRITE_PAGE_SIZE)
+      const page = Math.floor(clamped / resolvedPageSize)
       setCurrentPage(page)
     },
-    [spriteSlots.length]
+    [spriteSlots.length, resolvedPageSize]
   )
 
   // Preview data
@@ -872,7 +879,7 @@ export function SpritePanel(): React.JSX.Element {
             value={spriteStepperValue}
             min={0}
             max={spriteStepperMax}
-            pageSize={SPRITE_PAGE_SIZE}
+            pageSize={resolvedPageSize}
             onChange={handleSpriteStepperChange}
           />
           <span className="ml-1 text-[9px] text-text-secondary">

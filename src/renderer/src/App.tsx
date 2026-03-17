@@ -87,7 +87,7 @@ import {
   type ImportThingResult,
   type BulkEditResult
 } from './features/dialogs'
-import type { ObjectBuilderSettings } from '../../shared/settings'
+import { createObjectBuilderSettings, type ObjectBuilderSettings } from '../../shared/settings'
 import { createOtfiData, parseOtfi, writeOtfi } from './services/otfi'
 import { clearThumbnailCache } from './hooks/use-sprite-thumbnail'
 import { useKeyboardShortcuts } from './hooks/use-keyboard-shortcuts'
@@ -302,6 +302,9 @@ export function App(): React.JSX.Element {
   const [errorMessages, setErrorMessages] = useState<string[]>([])
   const [isLoading, setIsLoading] = useState(false)
   const [loadingLabel, setLoadingLabel] = useState('')
+  const [runtimeSettings, setRuntimeSettings] = useState<ObjectBuilderSettings>(
+    createObjectBuilderSettings
+  )
   const pendingCloseRef = useRef(false)
   const [recoveryInfo, setRecoveryInfo] = useState<RecoveryInfo | null>(null)
 
@@ -944,6 +947,7 @@ export function App(): React.JSX.Element {
 
   const handlePreferencesConfirm = useCallback(
     (settings: ObjectBuilderSettings) => {
+      setRuntimeSettings(settings)
       if (window.api?.settings) {
         window.api.settings.save(settings).then(() => {
           addLog('info', 'Preferences saved')
@@ -1390,6 +1394,7 @@ export function App(): React.JSX.Element {
   useEffect(() => {
     if (!window.api?.settings?.load) return
     window.api.settings.load().then((settings) => {
+      setRuntimeSettings(settings)
       useEditorStore
         .getState()
         .setClipboardAction(settings.thingListClipboardAction as ClipboardAction)
@@ -1414,9 +1419,15 @@ export function App(): React.JSX.Element {
             farLeftWidth={ui.previewContainerWidth}
             showFarLeft={ui.showPreviewPanel}
             onFarLeftWidthChange={(w) => setPanelWidth('preview', w)}
-            left={<ThingListPanel onEditThing={handleEditThing} onAction={handleThingListAction} />}
+            left={
+              <ThingListPanel
+                onEditThing={handleEditThing}
+                onAction={handleThingListAction}
+                pageSize={runtimeSettings.objectsListAmount}
+              />
+            }
             center={<ThingTypeEditor />}
-            right={<SpritePanel />}
+            right={<SpritePanel pageSize={runtimeSettings.spritesListAmount} />}
             leftWidth={ui.thingListContainerWidth}
             rightWidth={ui.spritesContainerWidth}
             leftMinWidth={190}
