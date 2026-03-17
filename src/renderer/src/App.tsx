@@ -11,6 +11,7 @@ import React, { useCallback, useEffect, useRef, useState } from 'react'
 import {
   MENU_FILE_NEW,
   MENU_FILE_OPEN,
+  MENU_FILE_COMPILE,
   MENU_FILE_COMPILE_AS,
   MENU_FILE_MERGE,
   MENU_FILE_PREFERENCES,
@@ -32,16 +33,22 @@ import {
 } from '../../shared/menu-actions'
 import type { LoadProjectParams } from '../../shared/project-state'
 import { useAppStore, useEditorStore, useSpriteStore, selectUI } from './stores'
-import { FrameGroupType } from './types/animation'
 import {
   ThingCategory,
   type ClientFeatures,
   type ClientInfo,
+  type ThingType,
+  type Version,
+  FrameGroupType,
   createClientInfo,
+  createThingData,
+  getThingFrameGroup,
+  getFrameGroupTotalSprites,
   ClipboardAction
 } from './types'
 import type { ThingData } from './types/things'
 import { getDefaultDuration } from './types/settings'
+import { ImageFormat, OTFormat } from './types/project'
 import { Toolbar } from './components/Toolbar'
 import { Modal, DialogButton } from './components/Modal'
 import { SplitPane } from './components/SplitPane'
@@ -81,12 +88,24 @@ import {
   type BulkEditResult
 } from './features/dialogs'
 import type { ObjectBuilderSettings } from '../../shared/settings'
-import { readOtb } from './services/otb'
-import { readItemsXml } from './services/items-xml'
-import { parseOtfi } from './services/otfi'
+import { createOtfiData, parseOtfi, writeOtfi } from './services/otfi'
 import { clearThumbnailCache } from './hooks/use-sprite-thumbnail'
 import { useKeyboardShortcuts } from './hooks/use-keyboard-shortcuts'
 import { workerService } from './workers/worker-service'
+import { buildSpriteSheet } from './services/sprite-render'
+import { argbToRgba, uncompressPixels } from './services/spr'
+import {
+  createThingExportPlan,
+  exportThingPlanToFiles,
+  type ThingExportEntry
+} from './services/thing-export'
+import {
+  loadServerItems,
+  saveServerItems,
+  isLoaded as isServerItemsLoaded,
+  unloadServerItems,
+  setAttributeServer
+} from './services/server-items'
 import { useTheme } from './providers/ThemeProvider'
 import { useTranslation } from 'react-i18next'
 import i18n from './i18n'
@@ -127,6 +146,137 @@ interface RecoveryInfo {
   serverItemsPath: string | null
 }
 
+interface CompileRunParams {
+  datFilePath: string
+  sprFilePath: string
+  fileName: string
+  version: Version
+  features: ClientFeatures
+  serverItemsDirectory: string | null
+  attributeServer: string | null
+}
+
+const MAGENTA_BG_ARGB = 0xffff00ff
+
+function getMaxThingId(things: ThingType[], fallback: number): number {
+  let maxId = fallback
+  for (const thing of things) {
+    if (thing.id > maxId) maxId = thing.id
+  }
+  return maxId
+}
+
+function getMaxSpriteId(sprites: Map<number, Uint8Array>): number {
+  let maxId = 0
+  for (const id of sprites.keys()) {
+    if (id > maxId) maxId = id
+  }
+  return maxId
+}
+
+function getBaseName(filePath: string): string {
+  const normalized = filePath.replace(/\\/g, '/')
+  const file = normalized.split('/').pop() ?? filePath
+  return file.replace(/\.[^/.]+$/u, '')
+}
+
+function getFileName(filePath: string): string {
+  const normalized = filePath.replace(/\\/g, '/')
+  return normalized.split('/').pop() ?? filePath
+}
+
+function joinPath(directory: string, fileName: string): string {
+  return `${directory.replace(/[\\/]+$/u, '')}/${fileName}`
+}
+
+function featurePayload(features: ClientFeatures): ClientFeatures {
+  return {
+    extended: features.extended,
+    transparency: features.transparency,
+    improvedAnimations: features.improvedAnimations,
+    frameGroups: features.frameGroups,
+    metadataController: features.metadataController,
+    attributeServer: features.attributeServer
+  }
+}
+
+function blendChannel(source: number, alpha: number, background: number): number {
+  return Math.round(source * alpha + background * (1 - alpha))
+}
+
+function encodeBmpFromRgba(
+  width: number,
+  height: number,
+  rgba: Uint8ClampedArray
+): ArrayBuffer {
+  const rowStride = width * 3
+  const rowPadding = (4 - (rowStride % 4)) % 4
+  const pixelDataSize = (rowStride + rowPadding) * height
+  const headerSize = 14 + 40
+  const fileSize = headerSize + pixelDataSize
+  const buffer = new ArrayBuffer(fileSize)
+  const view = new DataView(buffer)
+
+  // BITMAPFILEHEADER
+  view.setUint16(0, 0x4d42, true) // "BM"
+  view.setUint32(2, fileSize, true)
+  view.setUint16(6, 0, true)
+  view.setUint16(8, 0, true)
+  view.setUint32(10, headerSize, true)
+
+  // BITMAPINFOHEADER
+  view.setUint32(14, 40, true)
+  view.setInt32(18, width, true)
+  view.setInt32(22, height, true) // bottom-up
+  view.setUint16(26, 1, true)
+  view.setUint16(28, 24, true)
+  view.setUint32(30, 0, true)
+  view.setUint32(34, pixelDataSize, true)
+  view.setInt32(38, 2835, true) // 72 DPI
+  view.setInt32(42, 2835, true)
+  view.setUint32(46, 0, true)
+  view.setUint32(50, 0, true)
+
+  const backgroundR = 255
+  const backgroundG = 0
+  const backgroundB = 255
+
+  let writePos = headerSize
+  for (let y = height - 1; y >= 0; y--) {
+    for (let x = 0; x < width; x++) {
+      const offset = (y * width + x) * 4
+      const alpha = rgba[offset + 3] / 255
+      const red = blendChannel(rgba[offset], alpha, backgroundR)
+      const green = blendChannel(rgba[offset + 1], alpha, backgroundG)
+      const blue = blendChannel(rgba[offset + 2], alpha, backgroundB)
+
+      view.setUint8(writePos++, blue)
+      view.setUint8(writePos++, green)
+      view.setUint8(writePos++, red)
+    }
+
+    for (let i = 0; i < rowPadding; i++) {
+      view.setUint8(writePos++, 0)
+    }
+  }
+
+  return buffer
+}
+
+async function canvasToArrayBuffer(
+  canvas: HTMLCanvasElement,
+  mimeType: string,
+  quality?: number
+): Promise<ArrayBuffer> {
+  const blob = await new Promise<Blob | null>((resolve) => {
+    canvas.toBlob(resolve, mimeType, quality)
+  })
+  if (!blob) {
+    throw new Error('Failed to encode image data')
+  }
+  return blob.arrayBuffer()
+}
+
 // ---------------------------------------------------------------------------
 // App
 // ---------------------------------------------------------------------------
@@ -137,6 +287,7 @@ export function App(): React.JSX.Element {
   const setPanelWidth = useAppStore((s) => s.setPanelWidth)
   const togglePanel = useAppStore((s) => s.togglePanel)
   const selectedThingId = useAppStore((s) => s.selectedThingId)
+  const selectedThingIds = useAppStore((s) => s.selectedThingIds)
   const currentCategory = useAppStore((s) => s.currentCategory)
   const clientInfo = useAppStore((s) => s.clientInfo)
   const getThingById = useAppStore((s) => s.getThingById)
@@ -313,6 +464,8 @@ export function App(): React.JSX.Element {
       setLoadingLabel('Creating project...')
 
       try {
+        unloadServerItems()
+
         const features: ClientFeatures = {
           extended: result.extended,
           transparency: result.transparency,
@@ -411,6 +564,8 @@ export function App(): React.JSX.Element {
       setLoadingLabel('Loading files...')
 
       try {
+        unloadServerItems()
+
         // Build features from dialog result
         const features: ClientFeatures = {
           extended: result.extended,
@@ -470,21 +625,41 @@ export function App(): React.JSX.Element {
         const sprAccessor = useSpriteStore.getState().spriteAccessor!
         addLog('info', `SPR: ${sprAccessor.spriteCount} sprites (lazy loading)`)
 
-        // Parse OTB (optional)
-        let otbResult: ReturnType<typeof readOtb> | null = null
+        // Parse OTB + XML through server-items service (optional)
+        let otbInfo: { majorVersion: number; minorVersion: number; count: number } | null = null
         if (loadResult.otbBuffer) {
           setLoadingLabel('Parsing server items...')
-          otbResult = readOtb(loadResult.otbBuffer)
-          addLog(
-            'info',
-            `OTB: ${otbResult.items.count} items (v${otbResult.items.majorVersion}.${otbResult.items.minorVersion})`
-          )
-        }
+          const serverItemsResult = loadServerItems({
+            otbBuffer: loadResult.otbBuffer,
+            xmlContent: loadResult.xmlContent ?? undefined,
+            attributeServer: result.attributeServer
+          })
 
-        // Parse items.xml (optional, requires OTB)
-        if (loadResult.xmlContent && otbResult) {
-          readItemsXml(loadResult.xmlContent, otbResult.items)
-          addLog('info', 'items.xml loaded')
+          otbInfo = {
+            majorVersion: serverItemsResult.itemList.majorVersion,
+            minorVersion: serverItemsResult.itemList.minorVersion,
+            count: serverItemsResult.itemList.count
+          }
+
+          addLog('info', `OTB: ${otbInfo.count} items (v${otbInfo.majorVersion}.${otbInfo.minorVersion})`)
+
+          if (serverItemsResult.missingAttributes.length > 0) {
+            addLog(
+              'warning',
+              `items.xml unknown attributes: ${serverItemsResult.missingAttributes.join(', ')}`
+            )
+          }
+
+          if (serverItemsResult.missingTagAttributes.length > 0) {
+            addLog(
+              'warning',
+              `items.xml unknown tag attributes: ${serverItemsResult.missingTagAttributes.join(', ')}`
+            )
+          }
+
+          if (loadResult.xmlContent) {
+            addLog('info', 'items.xml loaded')
+          }
         }
 
         // Parse OTFI (optional)
@@ -498,11 +673,7 @@ export function App(): React.JSX.Element {
 
         // Build ClientInfo
         setLoadingLabel('Populating stores...')
-        const fileName =
-          result.datFile
-            .split('/')
-            .pop()
-            ?.replace(/\.dat$/i, '') ?? ''
+        const fileName = getBaseName(result.datFile)
         const clientInfo: ClientInfo = {
           ...createClientInfo(),
           clientVersion: result.version.value,
@@ -522,10 +693,10 @@ export function App(): React.JSX.Element {
           features,
           loaded: true,
           isTemporary: false,
-          otbLoaded: otbResult !== null,
-          otbMajorVersion: otbResult?.items.majorVersion ?? 0,
-          otbMinorVersion: otbResult?.items.minorVersion ?? 0,
-          otbItemsCount: otbResult?.items.count ?? 0,
+          otbLoaded: otbInfo !== null,
+          otbMajorVersion: otbInfo?.majorVersion ?? 0,
+          otbMinorVersion: otbInfo?.minorVersion ?? 0,
+          otbItemsCount: otbInfo?.count ?? 0,
           spriteSize: result.spriteDimension.size,
           spriteDataSize: result.spriteDimension.dataSize,
           loadedFileName: fileName
@@ -553,7 +724,7 @@ export function App(): React.JSX.Element {
           clientLoaded: true,
           clientIsTemporary: false,
           clientChanged: false,
-          otbLoaded: otbResult !== null
+          otbLoaded: otbInfo !== null
         })
 
         addLog('info', `Project loaded: ${fileName} v${result.version.valueStr}`)
@@ -571,15 +742,185 @@ export function App(): React.JSX.Element {
     [addLog]
   )
 
+  const runCompile = useCallback(
+    async (params: CompileRunParams): Promise<boolean> => {
+      const state = useAppStore.getState()
+      const currentClientInfo = state.clientInfo
+
+      if (!state.project.loaded || !currentClientInfo) {
+        addLog('warning', 'No project loaded')
+        return false
+      }
+
+      saveCurrentThingChanges()
+
+      setIsLoading(true)
+      setLoadingLabel('Compiling project...')
+      state.setLocked(true)
+
+      try {
+        const things = state.things
+        const sprites = useSpriteStore.getState().getAllSprites()
+        const maxSpriteId = getMaxSpriteId(sprites)
+
+        const datBuffer = await workerService.writeDat(
+          {
+            signature: params.version.datSignature,
+            maxItemId: getMaxThingId(things.items, 99),
+            maxOutfitId: getMaxThingId(things.outfits, 0),
+            maxEffectId: getMaxThingId(things.effects, 0),
+            maxMissileId: getMaxThingId(things.missiles, 0),
+            items: things.items,
+            outfits: things.outfits,
+            effects: things.effects,
+            missiles: things.missiles
+          },
+          params.version.value,
+          params.features
+        )
+
+        setLoadingLabel('Compiling sprites...')
+        const sprBuffer = await workerService.writeSpr(
+          {
+            signature: params.version.sprSignature,
+            spriteCount: maxSpriteId,
+            sprites
+          },
+          params.features.extended
+        )
+
+        const otfiContent = writeOtfi(
+          createOtfiData(
+            params.features,
+            getFileName(params.datFilePath),
+            getFileName(params.sprFilePath),
+            currentClientInfo.spriteSize,
+            currentClientInfo.spriteDataSize
+          )
+        )
+
+        let otbBuffer: ArrayBuffer | null = null
+        let xmlContent: string | null = null
+        const shouldExportServerItems = !!params.serverItemsDirectory && isServerItemsLoaded()
+        if (shouldExportServerItems) {
+          setLoadingLabel('Saving server items...')
+          if (params.attributeServer) {
+            setAttributeServer(params.attributeServer)
+          }
+          const serverItemsResult = saveServerItems()
+          otbBuffer = serverItemsResult.otbBuffer
+          xmlContent = serverItemsResult.xmlContent
+        }
+
+        setLoadingLabel('Writing files...')
+        await window.api.project.compile({
+          datFilePath: params.datFilePath,
+          sprFilePath: params.sprFilePath,
+          datBuffer,
+          sprBuffer,
+          versionValue: params.version.value,
+          datSignature: params.version.datSignature,
+          sprSignature: params.version.sprSignature,
+          features: featurePayload(params.features),
+          serverItemsPath: shouldExportServerItems ? params.serverItemsDirectory : null,
+          otbBuffer,
+          xmlContent,
+          otfiContent
+        })
+
+        const updatedClientInfo: ClientInfo = {
+          ...currentClientInfo,
+          clientVersion: params.version.value,
+          clientVersionStr: params.version.valueStr,
+          datSignature: params.version.datSignature,
+          sprSignature: params.version.sprSignature,
+          minItemId: 100,
+          maxItemId: getMaxThingId(things.items, 99),
+          minOutfitId: 1,
+          maxOutfitId: getMaxThingId(things.outfits, 0),
+          minEffectId: 1,
+          maxEffectId: getMaxThingId(things.effects, 0),
+          minMissileId: 1,
+          maxMissileId: getMaxThingId(things.missiles, 0),
+          minSpriteId: 1,
+          maxSpriteId,
+          features: params.features,
+          loaded: true,
+          isTemporary: false,
+          loadedFileName: params.fileName
+        }
+
+        state.setProjectLoaded({
+          clientInfo: updatedClientInfo,
+          loaded: true,
+          isTemporary: false,
+          changed: false,
+          fileName: params.fileName,
+          datFilePath: params.datFilePath,
+          sprFilePath: params.sprFilePath
+        })
+        state.setSpriteCount(maxSpriteId)
+        useEditorStore.getState().setEditingChanged(false)
+        useSpriteStore.getState().clearChangedSprites()
+
+        await window.api.menu.updateState({
+          clientLoaded: true,
+          clientIsTemporary: false,
+          clientChanged: false,
+          otbLoaded: updatedClientInfo.otbLoaded
+        })
+
+        addLog(
+          'info',
+          `Compiled successfully: ${params.fileName}.dat / ${params.fileName}.spr (v${params.version.valueStr})`
+        )
+        return true
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err)
+        addLog('error', `Failed to compile project: ${message}`)
+        setErrorMessages([message])
+        setActiveDialog('error')
+        return false
+      } finally {
+        state.setLocked(false)
+        setIsLoading(false)
+        setLoadingLabel('')
+      }
+    },
+    [addLog, saveCurrentThingChanges]
+  )
+
   const handleCompileAsConfirm = useCallback(
-    (result: CompileAssetsResult) => {
+    async (result: CompileAssetsResult) => {
       addLog(
         'info',
         `Compiling as: ${result.filesName} v${result.version.valueStr} to ${result.directory}`
       )
-      // TODO: Wire to actual project compilation logic in future steps
+      const features: ClientFeatures = {
+        extended: result.extended,
+        transparency: result.transparency,
+        improvedAnimations: result.improvedAnimations,
+        frameGroups: result.frameGroups,
+        metadataController: 'default',
+        attributeServer: result.attributeServer ?? null
+      }
+
+      const ok = await runCompile({
+        datFilePath: joinPath(result.directory, `${result.filesName}.dat`),
+        sprFilePath: joinPath(result.directory, `${result.filesName}.spr`),
+        fileName: result.filesName,
+        version: result.version,
+        features,
+        serverItemsDirectory: result.serverItemsDirectory,
+        attributeServer: result.attributeServer ?? null
+      })
+
+      if (ok && pendingCloseRef.current) {
+        pendingCloseRef.current = false
+        window.api?.app?.closeConfirmed()
+      }
     },
-    [addLog]
+    [addLog, runCompile]
   )
 
   const handleMergeConfirm = useCallback(
@@ -639,12 +980,207 @@ export function App(): React.JSX.Element {
     setActiveDialog(null)
   }, [])
 
+  const handleCompileCurrent = useCallback(async (): Promise<boolean> => {
+    const state = useAppStore.getState()
+    const compileClientInfo = state.clientInfo
+
+    if (!state.project.loaded || !compileClientInfo) {
+      addLog('warning', 'No project loaded')
+      return false
+    }
+
+    if (state.project.isTemporary || !state.project.datFilePath || !state.project.sprFilePath) {
+      setActiveDialog('compileAs')
+      return false
+    }
+
+    let ok = false
+    try {
+      const projectState = await window.api.project.getState()
+      ok = await runCompile({
+        datFilePath: state.project.datFilePath,
+        sprFilePath: state.project.sprFilePath,
+        fileName: state.project.fileName || getBaseName(state.project.datFilePath),
+        version: {
+          value: compileClientInfo.clientVersion,
+          valueStr: compileClientInfo.clientVersionStr,
+          datSignature: compileClientInfo.datSignature,
+          sprSignature: compileClientInfo.sprSignature,
+          otbVersion: 0
+        },
+        features: compileClientInfo.features,
+        serverItemsDirectory: projectState.serverItemsPath ?? null,
+        attributeServer: compileClientInfo.features.attributeServer
+      })
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err)
+      addLog('error', `Failed to prepare compile operation: ${message}`)
+      setErrorMessages([message])
+      setActiveDialog('error')
+      return false
+    }
+
+    if (ok && pendingCloseRef.current) {
+      pendingCloseRef.current = false
+      window.api?.app?.closeConfirmed()
+    }
+
+    return ok
+  }, [addLog, runCompile])
+
   const handleExportConfirm = useCallback(
-    (result: ExportDialogResult) => {
+    async (result: ExportDialogResult) => {
       addLog('info', `Exporting: ${result.fileName} as ${result.format} to ${result.directory}`)
-      // TODO: Wire to actual export logic in future steps
+      const state = useAppStore.getState()
+      const exportClientInfo = state.clientInfo
+
+      if (!state.project.loaded || !exportClientInfo) {
+        addLog('warning', 'No project loaded')
+        return
+      }
+
+      setIsLoading(true)
+      setLoadingLabel('Exporting objects...')
+      state.setLocked(true)
+
+      try {
+        const plan = createThingExportPlan({
+          category: currentCategory,
+          selectedThingIds,
+          things: state.things,
+          effectIdFilterEnabled: result.effectIdFilterEnabled,
+          effectIdFilterInput: result.effectIdFilterInput
+        })
+
+        if (plan.entries.length === 0) {
+          addLog('warning', 'No objects selected for export')
+          return
+        }
+
+        if (plan.missingEffectIds.length > 0) {
+          addLog(
+            'warning',
+            `Effects IDs not found: ${plan.missingEffectIds.join(', ')} (continuing with existing IDs)`
+          )
+        }
+
+        const transparent = exportClientInfo.features.transparency
+        const encodeThing = async (entry: ThingExportEntry): Promise<ArrayBuffer> => {
+          if (result.format === OTFormat.OBD) {
+            if (!result.version) {
+              throw new Error('OBD export requires a target version')
+            }
+
+            const spriteMap = new Map<
+              FrameGroupType,
+              Array<{ id: number; pixels: Uint8Array | null }>
+            >()
+            for (const groupType of [FrameGroupType.DEFAULT, FrameGroupType.WALKING] as const) {
+              const frameGroup = getThingFrameGroup(entry.thing, groupType)
+              if (!frameGroup) continue
+
+              const totalSprites = getFrameGroupTotalSprites(frameGroup)
+              const sprites = new Array(totalSprites)
+              for (let i = 0; i < totalSprites; i++) {
+                const spriteId = frameGroup.spriteIndex[i] ?? 0
+                let pixels: Uint8Array | null = null
+                if (spriteId > 0) {
+                  const compressed = useSpriteStore.getState().getSprite(spriteId)
+                  if (compressed && compressed.length > 0) {
+                    pixels = uncompressPixels(compressed, transparent)
+                  }
+                }
+                sprites[i] = { id: spriteId, pixels }
+              }
+              spriteMap.set(groupType, sprites)
+            }
+
+            const thingData = createThingData(
+              result.obdVersion,
+              result.version.value,
+              entry.thing,
+              spriteMap
+            )
+            return workerService.encodeObd(thingData)
+          }
+
+          const frameGroup = getThingFrameGroup(entry.thing, FrameGroupType.DEFAULT)
+          if (!frameGroup) {
+            throw new Error(`Thing ${entry.sourceId} has no frame group`)
+          }
+
+          const backgroundColor =
+            result.format === ImageFormat.PNG && result.transparentBackground
+              ? 0x00000000
+              : MAGENTA_BG_ARGB
+
+          const sheet = buildSpriteSheet(
+            frameGroup,
+            (spriteArrayIndex) => {
+              const spriteId = frameGroup.spriteIndex[spriteArrayIndex]
+              if (!spriteId || spriteId <= 0) return null
+
+              const compressed = useSpriteStore.getState().getSprite(spriteId)
+              if (!compressed || compressed.length === 0) return null
+
+              return uncompressPixels(compressed, transparent)
+            },
+            backgroundColor
+          )
+
+          if (sheet.width === 0 || sheet.height === 0) {
+            throw new Error(`Thing ${entry.sourceId} has no sprite data`)
+          }
+
+          const rgba = new Uint8ClampedArray(argbToRgba(sheet.pixels))
+          if (result.format === ImageFormat.BMP) {
+            return encodeBmpFromRgba(sheet.width, sheet.height, rgba)
+          }
+
+          const canvas = document.createElement('canvas')
+          canvas.width = sheet.width
+          canvas.height = sheet.height
+          const ctx = canvas.getContext('2d')
+          if (!ctx) {
+            throw new Error('Failed to create canvas context')
+          }
+
+          ctx.putImageData(new ImageData(rgba, sheet.width, sheet.height), 0, 0)
+
+          if (result.format === ImageFormat.JPG) {
+            const quality = Math.max(0.1, Math.min(1, result.jpegQuality / 100))
+            return canvasToArrayBuffer(canvas, 'image/jpeg', quality)
+          }
+
+          return canvasToArrayBuffer(canvas, 'image/png')
+        }
+
+        const exportResult = await exportThingPlanToFiles({
+          plan,
+          directory: result.directory,
+          fileNamePrefix: result.fileName,
+          format: result.format,
+          encodeThing,
+          writeBinary: (filePath, data) => window.api.file.writeBinary(filePath, data),
+          writeText: (filePath, text) => window.api.file.writeText(filePath, text)
+        })
+
+        addLog('info', `Export complete: ${exportResult.exportedCount} object(s)`)
+        if (exportResult.mapFilePath) {
+          addLog('info', `Effects ID map generated: ${exportResult.mapFilePath}`)
+        }
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err)
+        addLog('error', `Failed to export objects: ${message}`)
+        setErrorMessages([message])
+        setActiveDialog('error')
+      } finally {
+        state.setLocked(false)
+        setIsLoading(false)
+        setLoadingLabel('')
+      }
     },
-    [addLog]
+    [addLog, currentCategory, selectedThingIds]
   )
 
   const handleImportConfirm = useCallback(
@@ -674,14 +1210,10 @@ export function App(): React.JSX.Element {
   }, [])
 
   // Close confirmation dialog handlers
-  const handleCloseConfirmSave = useCallback(() => {
-    // TODO: Wire to actual compile logic when available
-    // For now, close without saving (same as "Don't Save")
-    pendingCloseRef.current = false
+  const handleCloseConfirmSave = useCallback(async () => {
     setActiveDialog(null)
-    addLog('info', 'Closing with unsaved changes (compile not yet wired)')
-    window.api?.app?.closeConfirmed()
-  }, [addLog])
+    await handleCompileCurrent()
+  }, [handleCompileCurrent])
 
   const handleCloseConfirmDiscard = useCallback(() => {
     pendingCloseRef.current = false
@@ -765,6 +1297,9 @@ export function App(): React.JSX.Element {
         case MENU_FILE_OPEN:
           setActiveDialog('open')
           break
+        case MENU_FILE_COMPILE:
+          void handleCompileCurrent()
+          break
         case MENU_FILE_COMPILE_AS:
           setActiveDialog('compileAs')
           break
@@ -820,7 +1355,7 @@ export function App(): React.JSX.Element {
           break
       }
     },
-    [togglePanel]
+    [togglePanel, handleCompileCurrent]
   )
 
   // Listen for menu actions from the main process (native menu clicks)
