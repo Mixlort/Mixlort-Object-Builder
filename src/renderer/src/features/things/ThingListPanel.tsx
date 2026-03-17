@@ -15,6 +15,7 @@
 
 import React, { useState, useRef, useCallback, useMemo, useEffect } from 'react'
 import { workerService } from '../../workers/worker-service'
+import { compareFileNamesNaturally } from '../../utils'
 import {
   useAppStore,
   useEditorStore,
@@ -801,8 +802,8 @@ export function ThingListPanel({
 
       if (obdFiles.length === 0) return
 
-      // Sort files by name for consistent import order
-      obdFiles.sort((a, b) => a.name.localeCompare(b.name))
+      // Sort files by numeric file name order: 1, 2, 3, 10...
+      obdFiles.sort((a, b) => compareFileNamesNaturally(a.name, b.name))
 
       const appStore = useAppStore.getState()
 
