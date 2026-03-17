@@ -168,18 +168,18 @@ function PreviewSection({
     useAnimationStore.getState().stop()
   }, [])
 
-  if (!editingThingData) return null
-
-  const thing = editingThingData.thing
-  const hasWalking = isOutfit && thing.frameGroups && thing.frameGroups.length > 1
-  const fg = thing.frameGroups?.[frameGroupType === FGT.WALKING ? 1 : 0] ?? thing.frameGroups?.[0]
+  const thing = editingThingData?.thing ?? null
+  const hasWalking = isOutfit && !!thing?.frameGroups && thing.frameGroups.length > 1
+  const fg = thing?.frameGroups?.[frameGroupType === FGT.WALKING ? 1 : 0] ?? thing?.frameGroups?.[0]
   const hasAnimation = fg !== undefined && fg.frames > 1
-  const isEffect = thing.category === ThingCategory.EFFECT
+  const isEffect = thing?.category === ThingCategory.EFFECT
 
   useEffect(() => {
-    if (!isEffect || !effectLoopEnabled || !hasAnimation || !isComplete) return
+    if (!editingThingData || !isEffect || !effectLoopEnabled || !hasAnimation || !isComplete) return
     useAnimationStore.getState().play()
-  }, [isEffect, effectLoopEnabled, hasAnimation, isComplete])
+  }, [editingThingData, isEffect, effectLoopEnabled, hasAnimation, isComplete])
+
+  if (!editingThingData || !thing) return null
 
   // Legacy: outfits always face South (patternX=2), others patternX=0
   const patternX = isOutfit ? 2 : 0
