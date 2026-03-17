@@ -91,7 +91,7 @@ function PreviewSection({
   const currentFrame = useAnimationStore((s) => s.currentFrame)
   const isComplete = useAnimationStore((s) => s.isComplete)
 
-  const [frameGroupType, setFrameGroupType] = useState<FrameGroupType>(FGT.WALKING)
+  const [frameGroupType, setFrameGroupType] = useState<FrameGroupType>(FGT.DEFAULT)
   const [zoomed, setZoomed] = useState(false)
   const [effectLoopEnabled, setEffectLoopEnabled] = useState(false)
 
@@ -130,7 +130,7 @@ function PreviewSection({
     if (!editingThingData) return
 
     const thing = editingThingData.thing
-    const fg = thing.frameGroups?.[frameGroupType === FGT.WALKING ? 1 : 0]
+    const fg = thing.frameGroups?.[frameGroupType === FGT.WALKING ? 1 : 0] ?? thing.frameGroups?.[0]
     if (fg) {
       useAnimationStore.getState().setFrameGroup(fg, frameGroupType)
       useAnimationStore.getState().play()
@@ -186,6 +186,28 @@ function PreviewSection({
 
   // Colorize: only pass outfitData to renderer when toggle is ON and valid
   const effectiveOutfitData = isOutfit && colorizeEnabled ? outfitData : null
+
+  const renderSwitch = (label: string, checked: boolean, onToggle: () => void) => (
+    <div className="flex items-center justify-center gap-1.5">
+      <span className="text-xs text-secondary">{label}</span>
+      <button
+        type="button"
+        role="switch"
+        aria-label={label}
+        aria-checked={checked}
+        className={`relative inline-flex h-4 w-7 shrink-0 cursor-pointer rounded-full transition-colors ${
+          checked ? 'bg-accent' : 'bg-border'
+        }`}
+        onClick={onToggle}
+      >
+        <span
+          className={`pointer-events-none mt-0.5 inline-block h-3 w-3 rounded-full bg-white shadow transition-transform ${
+            checked ? 'translate-x-3.5' : 'translate-x-0.5'
+          }`}
+        />
+      </button>
+    </div>
+  )
 
   return (
     <div className="border-b border-border px-2 py-1.5">
@@ -253,35 +275,14 @@ function PreviewSection({
       )}
 
       {/* Zoom toggle switch */}
-      <div className="flex items-center justify-center gap-1.5">
-        <span className="text-xs text-secondary">{t('labels.zoom')}</span>
-        <button
-          type="button"
-          role="switch"
-          aria-checked={zoomed}
-          className={`relative inline-flex h-4 w-7 shrink-0 cursor-pointer rounded-full transition-colors ${
-            zoomed ? 'bg-accent' : 'bg-border'
-          }`}
-          onClick={() => setZoomed(!zoomed)}
-        >
-          <span
-            className={`pointer-events-none inline-block h-3 w-3 rounded-full bg-white shadow transition-transform ${
-              zoomed ? 'translate-x-3.5' : 'translate-x-0.5'
-            } mt-0.5`}
-          />
-        </button>
-      </div>
+      {renderSwitch(t('labels.zoom'), zoomed, () => setZoomed(!zoomed))}
 
       {isEffect && hasAnimation && (
-        <label className="mt-1.5 flex items-center justify-center gap-1.5 text-xs text-secondary">
-          <input
-            type="checkbox"
-            className="accent-accent"
-            checked={effectLoopEnabled}
-            onChange={(event) => setEffectLoopEnabled(event.target.checked)}
-          />
-          <span>{t('labels.loop')}</span>
-        </label>
+        <div className="mt-1.5">
+          {renderSwitch(t('labels.loop'), effectLoopEnabled, () =>
+            setEffectLoopEnabled(!effectLoopEnabled)
+          )}
+        </div>
       )}
     </div>
   )

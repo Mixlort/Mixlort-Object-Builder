@@ -1,5 +1,5 @@
 import React from 'react'
-import { act, render, screen } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { PreviewPanel } from '../PreviewPanel'
 import {
@@ -7,12 +7,14 @@ import {
   resetEditorStore,
   resetAnimationStore,
   useAppStore,
+  useAnimationStore,
   useEditorStore
 } from '../../../stores'
 import {
   ThingCategory,
   createClientInfo,
   createThingData,
+  createFrameGroup,
   createThingType,
   FrameGroupType
 } from '../../../types'
@@ -30,6 +32,26 @@ function makeThingData() {
   thing.id = 100
   thing.category = ThingCategory.ITEM
   thing.frameGroups = []
+
+  return {
+    clientInfo,
+    thingData: createThingData(0, clientInfo.clientVersion, thing, new Map([[FrameGroupType.DEFAULT, []]]))
+  }
+}
+
+function makeAnimatedEffectThingData() {
+  const clientInfo = createClientInfo()
+  clientInfo.clientVersion = 1098
+  clientInfo.clientVersionStr = '10.98'
+
+  const thing = createThingType()
+  thing.id = 1
+  thing.category = ThingCategory.EFFECT
+
+  const frameGroup = createFrameGroup()
+  frameGroup.frames = 2
+  frameGroup.spriteIndex = [1, 2]
+  thing.frameGroups = [frameGroup]
 
   return {
     clientInfo,
@@ -61,5 +83,50 @@ describe('PreviewPanel', () => {
     })
 
     expect(screen.getByTestId('sprite-renderer')).toBeInTheDocument()
+  })
+
+  it('keeps animated effects playable and restarts them when loop is enabled', async () => {
+    const { clientInfo, thingData } = makeAnimatedEffectThingData()
+
+    act(() => {
+      useAppStore.getState().setClientInfo(clientInfo)
+      useAppStore.getState().setCurrentCategory(ThingCategory.EFFECT)
+      useEditorStore.getState().setEditingThingData(thingData)
+    })
+
+    render(<PreviewPanel />)
+
+    await waitFor(() => {
+      expect(useAnimationStore.getState().frameGroup?.frames).toBe(2)
+      expect(useAnimationStore.getState().isPlaying).toBe(true)
+    })
+
+    fireEvent.click(screen.getByTitle('Stop'))
+
+    await waitFor(() => {
+      expect(useAnimationStore.getState().isPlaying).toBe(false)
+      expect(useAnimationStore.getState().currentFrame).toBe(0)
+    })
+
+    fireEvent.click(screen.getByTitle('Play'))
+
+    await waitFor(() => {
+      expect(useAnimationStore.getState().isPlaying).toBe(true)
+    })
+
+    fireEvent.click(screen.getByRole('switch', { name: 'Loop' }))
+
+    act(() => {
+      useAnimationStore.setState({
+        isPlaying: false,
+        isComplete: true,
+        currentFrame: 1
+      })
+    })
+
+    await waitFor(() => {
+      expect(useAnimationStore.getState().isPlaying).toBe(true)
+      expect(useAnimationStore.getState().isComplete).toBe(false)
+    })
   })
 })
