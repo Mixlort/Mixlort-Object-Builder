@@ -24,6 +24,7 @@ import { OTFormat } from '../../types/project'
 import { VERSIONS } from '../../data'
 import type { Version } from '../../types/version'
 import type { ThingExportFormat } from '../../types/project'
+import { parseIdList } from '../../utils'
 
 // ---------------------------------------------------------------------------
 // Types
@@ -37,6 +38,8 @@ export interface ExportDialogResult {
   jpegQuality: number
   version: Version | null
   obdVersion: number
+  effectIdFilterEnabled: boolean
+  effectIdFilterInput: string
 }
 
 export interface ExportDialogProps {
@@ -79,6 +82,8 @@ export function ExportDialog({
   const [jpegQuality, setJpegQuality] = useState(100)
   const [selectedVersion, setSelectedVersion] = useState<Version | null>(currentVersion)
   const [obdVersion, setObdVersion] = useState(OBDVersion.VERSION_3)
+  const [effectIdFilterEnabled, setEffectIdFilterEnabled] = useState(false)
+  const [effectIdFilterInput, setEffectIdFilterInput] = useState('')
 
   // Reset on open (render-time state adjustment)
   const [prevOpen, setPrevOpen] = useState(false)
@@ -89,6 +94,8 @@ export function ExportDialog({
     setJpegQuality(100)
     setTransparentBackground(false)
     setObdVersion(OBDVersion.VERSION_3)
+    setEffectIdFilterEnabled(false)
+    setEffectIdFilterInput('')
   }
   if (open !== prevOpen) {
     setPrevOpen(open)
@@ -111,6 +118,19 @@ export function ExportDialog({
     setSelectedVersion(ver)
   }, [])
 
+  const effectIdFilterError = (() => {
+    if (!effectIdFilterEnabled || effectIdFilterInput.trim().length === 0) {
+      return null
+    }
+
+    try {
+      parseIdList(effectIdFilterInput)
+      return null
+    } catch (error) {
+      return error instanceof Error ? error.message : String(error)
+    }
+  })()
+
   const handleConfirm = useCallback(() => {
     onConfirm({
       fileName,
@@ -119,7 +139,9 @@ export function ExportDialog({
       transparentBackground,
       jpegQuality,
       version: format === OTFormat.OBD ? selectedVersion : null,
-      obdVersion: format === OTFormat.OBD ? obdVersion : 0
+      obdVersion: format === OTFormat.OBD ? obdVersion : 0,
+      effectIdFilterEnabled,
+      effectIdFilterInput
     })
     onClose()
   }, [
@@ -130,6 +152,8 @@ export function ExportDialog({
     jpegQuality,
     selectedVersion,
     obdVersion,
+    effectIdFilterEnabled,
+    effectIdFilterInput,
     onConfirm,
     onClose
   ])
@@ -137,7 +161,8 @@ export function ExportDialog({
   const isValid =
     fileName.trim().length > 0 &&
     directory.length > 0 &&
-    (format !== OTFormat.OBD || selectedVersion !== null)
+    (format !== OTFormat.OBD || selectedVersion !== null) &&
+    !effectIdFilterError
 
   const versionOptions = VERSIONS.map((v) => ({ value: v.valueStr, label: `v${v.valueStr}` }))
 
@@ -260,6 +285,31 @@ export function ExportDialog({
               />
             </div>
           )}
+        </FieldGroup>
+
+        {/* Effects filter */}
+        <FieldGroup label="Effects Filter">
+          <div className="flex flex-col gap-2">
+            <CheckboxField
+              label="Exportar IDs específicos (effects)"
+              checked={effectIdFilterEnabled}
+              onChange={setEffectIdFilterEnabled}
+            />
+
+            <span className="text-xs text-text-secondary">Lista de IDs</span>
+
+            <textarea
+              className="min-h-[78px] w-full resize-y rounded-lg border border-border bg-bg-input px-3 py-2 text-xs text-text-primary outline-none transition-colors focus:border-accent focus:ring-1 focus:ring-accent disabled:cursor-not-allowed disabled:opacity-38"
+              value={effectIdFilterInput}
+              onChange={(event) => setEffectIdFilterInput(event.target.value)}
+              placeholder="Ex: 1, 5, 10-15"
+              disabled={!effectIdFilterEnabled}
+            />
+
+            {effectIdFilterEnabled && effectIdFilterError && (
+              <p className="text-xs text-error">{effectIdFilterError}</p>
+            )}
+          </div>
         </FieldGroup>
       </div>
     </Modal>

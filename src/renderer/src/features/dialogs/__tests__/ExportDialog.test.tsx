@@ -57,6 +57,15 @@ function setFileName(value: string) {
   fireEvent.change(input, { target: { value } })
 }
 
+function setEffectIdList(value: string) {
+  const input = screen.getByPlaceholderText('Ex: 1, 5, 10-15')
+  fireEvent.change(input, { target: { value } })
+}
+
+function toggleEffectIdFilter() {
+  fireEvent.click(screen.getByLabelText('Exportar IDs específicos (effects)'))
+}
+
 async function browseDirectory() {
   const browseBtn = screen.getByText('Browse')
   fireEvent.click(browseBtn)
@@ -102,6 +111,12 @@ describe('ExportDialog', () => {
     expect(getFormatRadio('BMP')).toBeInTheDocument()
     expect(getFormatRadio('JPG')).toBeInTheDocument()
     expect(getFormatRadio('OBD')).toBeInTheDocument()
+  })
+
+  it('renders effects filter controls', () => {
+    renderDialog()
+    expect(screen.getByLabelText('Exportar IDs específicos (effects)')).toBeInTheDocument()
+    expect(screen.getByPlaceholderText('Ex: 1, 5, 10-15')).toBeDisabled()
   })
 
   it('PNG is selected by default', () => {
@@ -226,7 +241,58 @@ describe('ExportDialog', () => {
     expect(result.jpegQuality).toBe(100)
     expect(result.version).toBeNull() // null for non-OBD
     expect(result.obdVersion).toBe(0) // 0 for non-OBD
+    expect(result.effectIdFilterEnabled).toBe(false)
+    expect(result.effectIdFilterInput).toBe('')
     expect(onClose).toHaveBeenCalledTimes(1)
+  })
+
+  it('enables list field when effects filter is checked', () => {
+    renderDialog()
+    toggleEffectIdFilter()
+    expect(screen.getByPlaceholderText('Ex: 1, 5, 10-15')).not.toBeDisabled()
+  })
+
+  it('shows validation error and disables export for invalid token', async () => {
+    renderDialog()
+    setFileName('test-file')
+    await browseDirectory()
+
+    toggleEffectIdFilter()
+    setEffectIdList('1,abc,3')
+
+    expect(screen.getByText('Invalid token "abc"')).toBeInTheDocument()
+    const exportBtn = screen.getAllByText('Export')[1]
+    expect(exportBtn).toBeDisabled()
+  })
+
+  it('accepts mixed separators and ranges for effects filter', async () => {
+    renderDialog()
+    setFileName('test-file')
+    await browseDirectory()
+
+    toggleEffectIdFilter()
+    setEffectIdList('1, 2 3\n4-6')
+
+    expect(screen.queryByText(/Invalid token/)).not.toBeInTheDocument()
+    const exportBtn = screen.getAllByText('Export')[1]
+    expect(exportBtn).not.toBeDisabled()
+  })
+
+  it('confirm includes effects filter fields', async () => {
+    const onConfirm = vi.fn()
+    renderDialog({ onConfirm })
+
+    setFileName('test-file')
+    await browseDirectory()
+    toggleEffectIdFilter()
+    setEffectIdList('1, 5, 10-12')
+
+    const exportBtn = screen.getAllByText('Export')[1]
+    fireEvent.click(exportBtn)
+
+    const result = onConfirm.mock.calls[0][0]
+    expect(result.effectIdFilterEnabled).toBe(true)
+    expect(result.effectIdFilterInput).toBe('1, 5, 10-12')
   })
 
   it('confirm with JPG format includes jpeg quality', async () => {
