@@ -25,6 +25,46 @@ Object Builder allows you to open, inspect, edit, and compile Tibia client data 
 - **Light/Dark theme** &mdash; System-aware theme with manual override
 - **Cross-platform** &mdash; Windows, macOS (Intel + Apple Silicon), and Linux
 
+## Exportar effects por IDs
+
+No diálogo de exportação de objetos (`Export`), você pode ativar a opção:
+
+- `Exportar IDs específicos (effects)`
+- `Lista de IDs`
+
+A lista aceita:
+
+- vírgula, espaço e quebra de linha como separadores
+- intervalos no formato `a-b`
+
+Exemplos válidos:
+
+- `1,2,3`
+- `1, 5, 10-15`
+- `1 2 3` (com ou sem quebras de linha)
+
+Com o filtro ativo:
+
+- ele é aplicado somente na categoria `effects`
+- lista vazia exporta todos os effects da categoria
+- IDs inexistentes geram aviso no log e a exportação continua com os IDs encontrados
+- arquivos exportados são reindexados de forma contínua (`1..N`) no nome do arquivo
+
+Além dos arquivos exportados, o Object Builder gera:
+
+- `effects-id-map.json`
+
+Formato do mapa:
+
+```json
+{
+  "oldToNew": { "123": 1, "456": 2 },
+  "newToOld": { "1": 123, "2": 456 }
+}
+```
+
+Quando o filtro não está ativo, o comportamento de exportação permanece o mesmo.
+
 ## Download
 
 Pre-built installers are available for Windows, macOS, and Linux on the [latest release](https://github.com/valerioleite/electron-object-builder/releases/latest) page.
