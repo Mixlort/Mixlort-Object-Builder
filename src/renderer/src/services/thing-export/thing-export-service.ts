@@ -112,6 +112,10 @@ function getExportFileName(
     return `${effectFileId}.${extension}`
   }
 
+  if (fileNamePrefix.trim().length === 0) {
+    return `${entry.exportId}.${extension}`
+  }
+
   return `${fileNamePrefix}_${entry.exportId}.${extension}`
 }
 

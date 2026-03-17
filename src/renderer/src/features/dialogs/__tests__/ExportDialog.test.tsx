@@ -194,14 +194,10 @@ describe('ExportDialog', () => {
     expect(getFormatRadio('JPG')).toBeInTheDocument()
   })
 
-  it('export button is disabled when filename is empty', () => {
+  it('export button stays disabled when directory is empty even if name is optional', () => {
     renderDialog()
-    // Buttons with text "Export" in the footer (the primary one)
     const exportButtons = screen.getAllByText('Export')
-    // The primary export button is the one in the footer
-    const exportBtn =
-      exportButtons.find((btn) => btn.tagName === 'BUTTON' && btn !== exportButtons[0]) ||
-      exportButtons[exportButtons.length - 1]
+    const exportBtn = exportButtons[exportButtons.length - 1]
     expect(exportBtn).toBeDisabled()
   })
 
@@ -212,6 +208,15 @@ describe('ExportDialog', () => {
     const exportButtons = screen.getAllByText('Export')
     const exportBtn = exportButtons[exportButtons.length - 1]
     expect(exportBtn).toBeDisabled()
+  })
+
+  it('export button is enabled with empty filename when directory is set', async () => {
+    renderDialog()
+    await browseDirectory()
+
+    const exportButtons = screen.getAllByText('Export')
+    const exportBtn = exportButtons[exportButtons.length - 1]
+    expect(exportBtn).not.toBeDisabled()
   })
 
   it('export button is enabled when filename and directory are set', async () => {

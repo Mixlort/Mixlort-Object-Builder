@@ -1033,7 +1033,8 @@ export function App(): React.JSX.Element {
 
   const handleExportConfirm = useCallback(
     async (result: ExportDialogResult) => {
-      addLog('info', `Exporting: ${result.fileName} as ${result.format} to ${result.directory}`)
+      const exportLabel = result.fileName.trim().length > 0 ? result.fileName : '[auto]'
+      addLog('info', `Exporting: ${exportLabel} as ${result.format} to ${result.directory}`)
       const state = useAppStore.getState()
       const exportClientInfo = state.clientInfo
 

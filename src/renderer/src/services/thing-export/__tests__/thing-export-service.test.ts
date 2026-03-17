@@ -235,4 +235,37 @@ describe('thing-export-service', () => {
     expect(writeText).not.toHaveBeenCalled()
     expect(result.mapFilePath).toBeNull()
   })
+
+  it('uses export ids as file names when prefix is empty', async () => {
+    const plan = createThingExportPlan({
+      category: ThingCategory.ITEM,
+      selectedThingIds: [100, 101],
+      things: {
+        items: [makeThing(100, ThingCategory.ITEM), makeThing(101, ThingCategory.ITEM)],
+        outfits: [],
+        effects: [],
+        missiles: []
+      },
+      effectIdFilterEnabled: false,
+      effectIdFilterInput: ''
+    })
+
+    const writeBinary = vi.fn().mockResolvedValue(undefined)
+    const writeText = vi.fn().mockResolvedValue(undefined)
+    const encodeThing = vi.fn().mockResolvedValue(new Uint8Array([1, 2, 3]).buffer)
+
+    await exportThingPlanToFiles({
+      plan,
+      directory: '/tmp/out',
+      fileNamePrefix: '',
+      format: ImageFormat.PNG,
+      encodeThing,
+      writeBinary,
+      writeText
+    })
+
+    expect(writeBinary).toHaveBeenNthCalledWith(1, '/tmp/out/100.png', expect.any(ArrayBuffer))
+    expect(writeBinary).toHaveBeenNthCalledWith(2, '/tmp/out/101.png', expect.any(ArrayBuffer))
+    expect(writeText).not.toHaveBeenCalled()
+  })
 })

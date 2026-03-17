@@ -164,7 +164,6 @@ export function ExportDialog({
   ])
 
   const isValid =
-    fileName.trim().length > 0 &&
     directory.length > 0 &&
     (format !== OTFormat.OBD || selectedVersion !== null) &&
     !effectIdFilterError
