@@ -120,15 +120,28 @@ export function DialogButton({
 interface FieldGroupProps {
   label: string
   children: React.ReactNode
+  compact?: boolean
 }
 
-export function FieldGroup({ label, children }: FieldGroupProps): React.JSX.Element {
+export function FieldGroup({
+  label,
+  children,
+  compact = false
+}: FieldGroupProps): React.JSX.Element {
   return (
-    <div className="flex flex-col gap-2">
-      <span className="text-xs font-medium uppercase tracking-wider text-text-secondary">
+    <div className={compact ? 'flex flex-col gap-1.5' : 'flex flex-col gap-2'}>
+      <span
+        className={
+          compact
+            ? 'text-[11px] font-medium uppercase tracking-wider text-text-secondary'
+            : 'text-xs font-medium uppercase tracking-wider text-text-secondary'
+        }
+      >
         {label}
       </span>
-      <div className="rounded-xl border border-border p-3">{children}</div>
+      <div className={compact ? 'rounded-xl border border-border p-2.5' : 'rounded-xl border border-border p-3'}>
+        {children}
+      </div>
     </div>
   )
 }
@@ -139,6 +152,7 @@ interface SelectFieldProps {
   onChange: (value: string) => void
   options: Array<{ value: string; label: string }>
   disabled?: boolean
+  compact?: boolean
 }
 
 export function SelectField({
@@ -146,13 +160,26 @@ export function SelectField({
   value,
   onChange,
   options,
-  disabled = false
+  disabled = false,
+  compact = false
 }: SelectFieldProps): React.JSX.Element {
   return (
-    <div className="flex items-center gap-2">
-      <label className="min-w-[100px] text-xs text-text-secondary">{label}</label>
+    <div className={compact ? 'flex items-center gap-1.5' : 'flex items-center gap-2'}>
+      <label
+        className={
+          compact
+            ? 'min-w-[94px] text-[11px] text-text-secondary'
+            : 'min-w-[100px] text-xs text-text-secondary'
+        }
+      >
+        {label}
+      </label>
       <select
-        className="flex-1 rounded-lg border border-border bg-bg-input px-3 py-2 text-xs text-text-primary outline-none transition-colors focus:border-accent focus:ring-1 focus:ring-accent disabled:opacity-38 disabled:cursor-not-allowed"
+        className={
+          compact
+            ? 'h-10 flex-1 rounded-lg border border-border bg-bg-input px-3 text-[11px] text-text-primary outline-none transition-colors focus:border-accent focus:ring-1 focus:ring-accent disabled:opacity-38 disabled:cursor-not-allowed'
+            : 'flex-1 rounded-lg border border-border bg-bg-input px-3 py-2 text-xs text-text-primary outline-none transition-colors focus:border-accent focus:ring-1 focus:ring-accent disabled:opacity-38 disabled:cursor-not-allowed'
+        }
         value={value}
         onChange={(e) => onChange(e.target.value)}
         disabled={disabled}
@@ -172,21 +199,23 @@ interface CheckboxFieldProps {
   checked: boolean
   onChange: (checked: boolean) => void
   disabled?: boolean
+  compact?: boolean
 }
 
 export function CheckboxField({
   label,
   checked,
   onChange,
-  disabled = false
+  disabled = false,
+  compact = false
 }: CheckboxFieldProps): React.JSX.Element {
   return (
     <label
-      className={`flex cursor-pointer items-center gap-2.5 rounded-lg px-1 py-1 text-xs text-text-primary transition-colors hover:bg-bg-hover ${disabled ? 'cursor-not-allowed opacity-38' : ''}`}
+      className={`flex cursor-pointer items-center rounded-lg text-text-primary transition-colors hover:bg-bg-hover ${compact ? 'gap-2 px-0.5 py-0.5 text-[11px]' : 'gap-2.5 px-1 py-1 text-xs'} ${disabled ? 'cursor-not-allowed opacity-38' : ''}`}
     >
       <input
         type="checkbox"
-        className="h-[18px] w-[18px] accent-accent"
+        className={compact ? 'h-4 w-4 accent-accent' : 'h-[18px] w-[18px] accent-accent'}
         checked={checked}
         onChange={(e) => onChange(e.target.checked)}
         disabled={disabled}
@@ -234,26 +263,44 @@ interface BrowseFieldProps {
   value: string
   onBrowse: () => void
   placeholder?: string
+  compact?: boolean
 }
 
 export function BrowseField({
   label,
   value,
   onBrowse,
-  placeholder = 'Select folder...'
+  placeholder = 'Select folder...',
+  compact = false
 }: BrowseFieldProps): React.JSX.Element {
   return (
-    <div className="flex items-center gap-2">
-      <label className="min-w-[100px] text-xs text-text-secondary">{label}</label>
+    <div className={compact ? 'flex items-center gap-1.5' : 'flex items-center gap-2'}>
+      <label
+        className={
+          compact
+            ? 'min-w-[94px] text-[11px] text-text-secondary'
+            : 'min-w-[100px] text-xs text-text-secondary'
+        }
+      >
+        {label}
+      </label>
       <input
         type="text"
-        className="flex-1 rounded-lg border border-border bg-bg-input px-3 py-2 text-xs text-text-secondary outline-none"
+        className={
+          compact
+            ? 'h-10 flex-1 rounded-lg border border-border bg-bg-input px-3 text-[11px] text-text-secondary outline-none'
+            : 'flex-1 rounded-lg border border-border bg-bg-input px-3 py-2 text-xs text-text-secondary outline-none'
+        }
         value={value}
         readOnly
         placeholder={placeholder}
       />
       <button
-        className="shrink-0 rounded-full border border-border px-4 py-1.5 text-xs font-medium text-text-primary transition-colors hover:bg-bg-hover active:bg-bg-tertiary"
+        className={
+          compact
+            ? 'h-10 shrink-0 rounded-full border border-border px-4 text-[11px] font-medium text-text-primary transition-colors hover:bg-bg-hover active:bg-bg-tertiary'
+            : 'shrink-0 rounded-full border border-border px-4 py-1.5 text-xs font-medium text-text-primary transition-colors hover:bg-bg-hover active:bg-bg-tertiary'
+        }
         onClick={onBrowse}
       >
         Browse
@@ -265,13 +312,24 @@ export function BrowseField({
 interface InfoRowProps {
   label: string
   value: string | number
+  compact?: boolean
 }
 
-export function InfoRow({ label, value }: InfoRowProps): React.JSX.Element {
+export function InfoRow({ label, value, compact = false }: InfoRowProps): React.JSX.Element {
   return (
-    <div className="flex items-center gap-2">
-      <span className="min-w-[100px] text-xs text-text-secondary">{label}</span>
-      <span className="text-xs font-medium text-text-primary">{value}</span>
+    <div className={compact ? 'flex items-center gap-1.5' : 'flex items-center gap-2'}>
+      <span
+        className={
+          compact
+            ? 'min-w-[94px] text-[11px] text-text-secondary'
+            : 'min-w-[100px] text-xs text-text-secondary'
+        }
+      >
+        {label}
+      </span>
+      <span className={compact ? 'text-[11px] font-medium text-text-primary' : 'text-xs font-medium text-text-primary'}>
+        {value}
+      </span>
     </div>
   )
 }

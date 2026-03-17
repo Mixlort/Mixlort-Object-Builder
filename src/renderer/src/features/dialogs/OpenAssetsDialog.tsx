@@ -305,11 +305,16 @@ export function OpenAssetsDialog({
         </>
       }
     >
-      <div className="flex flex-col gap-3">
+      <div className="flex flex-col gap-2.5">
         {/* Client folder */}
-        <FieldGroup label={t('controls.clientFolder')}>
-          <div className="flex flex-col gap-2">
-            <BrowseField label="Folder" value={clientDirectory} onBrowse={handleBrowseClient} />
+        <FieldGroup label={t('controls.clientFolder')} compact>
+          <div className="flex flex-col gap-1.5">
+            <BrowseField
+              label="Folder"
+              value={clientDirectory}
+              onBrowse={handleBrowseClient}
+              compact
+            />
             {recentClientDirectories.length > 0 && (
               <SelectField
                 label="Recent"
@@ -321,6 +326,7 @@ export function OpenAssetsDialog({
                   }
                 }}
                 options={recentClientDirectoryOptions}
+                compact
               />
             )}
           </div>
@@ -335,51 +341,55 @@ export function OpenAssetsDialog({
         {/* Version info (auto-detected) */}
         {clientInfo && (
           <>
-            <FieldGroup label={t('labels.version')}>
+            <FieldGroup label={t('labels.version')} compact>
               <InfoRow
                 label={t('labels.version')}
                 value={clientInfo.version?.valueStr ?? 'Unknown'}
+                compact
               />
             </FieldGroup>
 
             {/* DAT info */}
-            <FieldGroup label={t('labels.file') + ' DAT'}>
-              <div className="grid grid-cols-2 gap-1">
+            <FieldGroup label={t('labels.file') + ' DAT'} compact>
+              <div className="grid grid-cols-2 gap-x-4 gap-y-1">
                 <InfoRow
                   label={t('labels.signature')}
                   value={'0x' + clientInfo.datSignature.toString(16).toUpperCase().padStart(8, '0')}
+                  compact
                 />
-                <InfoRow label={t('labels.items')} value={clientInfo.itemsCount} />
-                <InfoRow label={t('labels.outfits')} value={clientInfo.outfitsCount} />
-                <InfoRow label={t('labels.effects')} value={clientInfo.effectsCount} />
-                <InfoRow label={t('labels.missiles')} value={clientInfo.missilesCount} />
+                <InfoRow label={t('labels.items')} value={clientInfo.itemsCount} compact />
+                <InfoRow label={t('labels.outfits')} value={clientInfo.outfitsCount} compact />
+                <InfoRow label={t('labels.effects')} value={clientInfo.effectsCount} compact />
+                <InfoRow label={t('labels.missiles')} value={clientInfo.missilesCount} compact />
               </div>
             </FieldGroup>
 
             {/* SPR info */}
-            <FieldGroup label={t('labels.file') + ' SPR'}>
-              <div className="grid grid-cols-2 gap-1">
+            <FieldGroup label={t('labels.file') + ' SPR'} compact>
+              <div className="grid grid-cols-2 gap-x-4 gap-y-1">
                 <InfoRow
                   label={t('labels.signature')}
                   value={'0x' + clientInfo.sprSignature.toString(16).toUpperCase().padStart(8, '0')}
+                  compact
                 />
-                <InfoRow label={t('labels.sprites')} value={clientInfo.spritesCount} />
+                <InfoRow label={t('labels.sprites')} value={clientInfo.spritesCount} compact />
               </div>
             </FieldGroup>
           </>
         )}
 
         {/* Server items folder (optional) */}
-        <FieldGroup label="Server Items (Optional)">
-          <div className="flex flex-col gap-2">
+        <FieldGroup label="Server Items (Optional)" compact>
+          <div className="flex flex-col gap-1.5">
             <BrowseField
               label="Folder"
               value={serverDirectory}
               onBrowse={handleBrowseServer}
               placeholder="Select server items folder..."
+              compact
             />
             {serverInfo && (
-              <div className="flex gap-4 pl-[108px] text-xs">
+              <div className="flex gap-4 pl-[96px] text-[11px]">
                 <span className={serverInfo.otbFile ? 'text-green-400' : 'text-error'}>
                   items.otb {serverInfo.otbFile ? '[OK]' : '[X]'}
                 </span>
@@ -392,13 +402,14 @@ export function OpenAssetsDialog({
         </FieldGroup>
 
         {/* Settings */}
-        <FieldGroup label={t('labels.options')}>
-          <div className="flex flex-col gap-2">
+        <FieldGroup label={t('labels.options')} compact>
+          <div className="flex flex-col gap-1.5">
             <SelectField
               label={t('labels.spriteDimension')}
               value={selectedDimensionIndex}
               onChange={setSelectedDimensionIndex}
               options={dimensionOptions}
+              compact
             />
             <SelectField
               label="Attribute Server"
@@ -406,6 +417,7 @@ export function OpenAssetsDialog({
               onChange={setSelectedAttributeServer}
               options={serverOptions}
               disabled={!serverDirectory}
+              compact
             />
           </div>
         </FieldGroup>
@@ -415,6 +427,7 @@ export function OpenAssetsDialog({
           flags={flags}
           versionValue={clientInfo?.version?.value ?? 0}
           onFlagChange={setFlag}
+          compact
         />
       </div>
     </Modal>
