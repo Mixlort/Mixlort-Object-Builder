@@ -121,11 +121,43 @@ describe('thing-export-service', () => {
 
     expect(result.exportedCount).toBe(2)
     expect(writeBinary).toHaveBeenCalledTimes(2)
-    expect(writeBinary).toHaveBeenNthCalledWith(1, '/tmp/out/effect_1.png', expect.any(ArrayBuffer))
-    expect(writeBinary).toHaveBeenNthCalledWith(2, '/tmp/out/effect_2.png', expect.any(ArrayBuffer))
+    expect(writeBinary).toHaveBeenNthCalledWith(1, '/tmp/out/1.png', expect.any(ArrayBuffer))
+    expect(writeBinary).toHaveBeenNthCalledWith(2, '/tmp/out/2.png', expect.any(ArrayBuffer))
     expect(writeText).toHaveBeenCalledTimes(1)
     expect(writeText).toHaveBeenCalledWith('/tmp/out/effects-id-map.json', expect.any(String))
     expect(result.mapFilePath).toBe('/tmp/out/effects-id-map.json')
+  })
+
+  it('uses exported effect ids as file names even without filter', async () => {
+    const plan = createThingExportPlan({
+      category: ThingCategory.EFFECT,
+      selectedThingIds: [7],
+      things: {
+        items: [],
+        outfits: [],
+        effects: [makeThing(7, ThingCategory.EFFECT)],
+        missiles: []
+      },
+      effectIdFilterEnabled: false,
+      effectIdFilterInput: ''
+    })
+
+    const writeBinary = vi.fn().mockResolvedValue(undefined)
+    const writeText = vi.fn().mockResolvedValue(undefined)
+    const encodeThing = vi.fn().mockResolvedValue(new Uint8Array([1, 2, 3]).buffer)
+
+    await exportThingPlanToFiles({
+      plan,
+      directory: '/tmp/out',
+      fileNamePrefix: 'ignored-for-effects',
+      format: ImageFormat.BMP,
+      encodeThing,
+      writeBinary,
+      writeText
+    })
+
+    expect(writeBinary).toHaveBeenCalledWith('/tmp/out/7.bmp', expect.any(ArrayBuffer))
+    expect(writeText).not.toHaveBeenCalled()
   })
 
   it('does not create map file when no effects filter map exists', async () => {
@@ -162,4 +194,3 @@ describe('thing-export-service', () => {
     expect(result.mapFilePath).toBeNull()
   })
 })
-

@@ -100,6 +100,18 @@ function getExportExtension(format: ThingExportFormat): string {
   }
 }
 
+function getExportFileName(
+  entry: ThingExportEntry,
+  extension: string,
+  fileNamePrefix: string
+): string {
+  if (entry.thing.category === TC.EFFECT) {
+    return `${entry.exportId}.${extension}`
+  }
+
+  return `${fileNamePrefix}_${entry.exportId}.${extension}`
+}
+
 export function createThingExportPlan(params: CreateThingExportPlanParams): ThingExportPlan {
   const { category, selectedThingIds, things, effectIdFilterEnabled, effectIdFilterInput } = params
   const categoryThings = getThingsByCategory(things, category)
@@ -156,7 +168,7 @@ export async function exportThingPlanToFiles(
   const writtenFiles: string[] = []
 
   for (const entry of plan.entries) {
-    const fileName = `${fileNamePrefix}_${entry.exportId}.${extension}`
+    const fileName = getExportFileName(entry, extension, fileNamePrefix)
     const fullPath = joinPath(directory, fileName)
     const data = await encodeThing(entry)
     await writeBinary(fullPath, data)
@@ -176,4 +188,3 @@ export async function exportThingPlanToFiles(
     mapFilePath
   }
 }
-

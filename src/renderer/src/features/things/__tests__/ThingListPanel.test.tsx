@@ -472,6 +472,30 @@ describe('ThingListPanel', () => {
       // Replace/Export/Duplicate/Remove still enabled
       expect(screen.getByTestId('action-replace')).not.toBeDisabled()
     })
+
+    it('keeps non-tail ids in the list as empty entries when removing', () => {
+      loadProjectWithThings()
+      render(<ThingListPanel />)
+
+      fireEvent.click(screen.getByTestId('thing-list-item-101'))
+      fireEvent.click(screen.getByTestId('action-remove'))
+
+      expect(screen.getByTestId('thing-list-item-101')).toBeInTheDocument()
+      expect(useAppStore.getState().things.items).toHaveLength(5)
+      expect(useAppStore.getState().getThingById(ThingCategory.ITEM, 101)).toBeTruthy()
+    })
+
+    it('removes the last id from the list when removing the tail entry', () => {
+      loadProjectWithThings()
+      render(<ThingListPanel />)
+
+      fireEvent.click(screen.getByTestId('thing-list-item-104'))
+      fireEvent.click(screen.getByTestId('action-remove'))
+
+      expect(screen.queryByTestId('thing-list-item-104')).not.toBeInTheDocument()
+      expect(useAppStore.getState().things.items).toHaveLength(4)
+      expect(useAppStore.getState().getThingById(ThingCategory.ITEM, 104)).toBeUndefined()
+    })
   })
 
   // -----------------------------------------------------------------------

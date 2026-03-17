@@ -19,7 +19,7 @@ import { uncompressPixels, argbToRgba } from '../services/spr'
 import { LruCache } from '../utils/lru-cache'
 
 // ---------------------------------------------------------------------------
-// Module-level thumbnail cache (thing ID + category -> data URL, LRU eviction)
+// Module-level thumbnail cache (thing signature -> data URL, LRU eviction)
 // ---------------------------------------------------------------------------
 
 const DEFAULT_THUMBNAIL_CACHE_SIZE = 5000
@@ -53,6 +53,33 @@ const SPRITE_SIZE = 32
 
 // Reusable offscreen canvas for thumbnail rendering (avoids DOM allocation per thumbnail)
 let _offscreenCanvas: HTMLCanvasElement | null = null
+
+function getThingThumbnailSignature(thing: ThingType): string {
+  if (!thing.frameGroups || thing.frameGroups.length === 0) {
+    return 'no-frame-groups'
+  }
+
+  return thing.frameGroups
+    .map((frameGroup, index) => {
+      if (!frameGroup) {
+        return `${index}:missing`
+      }
+
+      return [
+        index,
+        frameGroup.width,
+        frameGroup.height,
+        frameGroup.exactSize,
+        frameGroup.layers,
+        frameGroup.patternX,
+        frameGroup.patternY,
+        frameGroup.patternZ,
+        frameGroup.frames,
+        frameGroup.spriteIndex.join(',')
+      ].join(':')
+    })
+    .join('|')
+}
 
 function getOffscreenCanvas(width: number, height: number): HTMLCanvasElement {
   if (!_offscreenCanvas) {
@@ -185,13 +212,14 @@ function renderThingThumbnail(
  */
 export function useSpriteThumbnail(thing: ThingType, category: ThingCategory): string | null {
   const transparent = useAppStore((s) => s.clientInfo?.features?.transparency ?? false)
+  const thingSignature = useMemo(() => getThingThumbnailSignature(thing), [thing])
 
   const dataUrl = useMemo(() => {
     if (!thing || !thing.frameGroups?.length) {
       return null
     }
 
-    const cacheKey = `${category}:${thing.id}`
+    const cacheKey = `${category}:${thing.id}:${transparent ? 1 : 0}:${thingSignature}`
 
     // Check module-level cache
     const cached = thumbnailCache.get(cacheKey)
@@ -208,7 +236,7 @@ export function useSpriteThumbnail(thing: ThingType, category: ThingCategory): s
     } catch {
       return null
     }
-  }, [thing, category, transparent])
+  }, [thing, category, transparent, thingSignature])
 
   return dataUrl
 }
