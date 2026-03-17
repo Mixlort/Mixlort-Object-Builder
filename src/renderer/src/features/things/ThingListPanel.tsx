@@ -28,6 +28,7 @@ import {
   type ThingType,
   type ThingData,
   createThingType,
+  createThing,
   cloneThingType,
   cloneThingData,
   createFrameGroup,
@@ -223,7 +224,6 @@ export function ThingListPanel({
   const selectThing = useAppStore((s) => s.selectThing)
   const selectThingsAction = useAppStore((s) => s.selectThings)
   const addThing = useAppStore((s) => s.addThing)
-  const removeThing = useAppStore((s) => s.removeThing)
   const getThingById = useAppStore((s) => s.getThingById)
   const clientInfo = useAppStore((s) => s.clientInfo)
 
@@ -524,9 +524,34 @@ export function ThingListPanel({
           break
         case 'remove':
           if (selectedThingIds.length > 0) {
-            const idsToRemove = [...selectedThingIds]
+            const appStore = useAppStore.getState()
+            const idsToRemove = [...selectedThingIds].sort((a, b) => b - a)
+            const useFrameGroups = clientInfo?.features?.frameGroups ?? false
+            let changed = false
+
             for (const id of idsToRemove) {
-              removeThing(currentCategory, id)
+              const currentThings = appStore.getThingsByCategory(currentCategory)
+              if (currentThings.length === 0) continue
+
+              const maxId = currentThings[currentThings.length - 1].id
+              const thing = appStore.getThingById(currentCategory, id)
+              if (!thing) continue
+
+              // Keep fixed IDs: blank middle entries, shrink only at the tail.
+              if (id === maxId) {
+                appStore.removeThing(currentCategory, id)
+              } else {
+                const emptyThing = createThing(id, currentCategory, useFrameGroups, 0)
+                appStore.updateThing(currentCategory, id, emptyThing)
+              }
+              changed = true
+            }
+
+            if (changed) {
+              appStore.setProjectChanged(true)
+              if (window.api?.menu) {
+                window.api.menu.updateState({ clientChanged: true })
+              }
             }
             selectThing(null)
           }
@@ -732,7 +757,6 @@ export function ThingListPanel({
       onAction,
       getThingById,
       addThing,
-      removeThing,
       selectThing
     ]
   )

@@ -264,7 +264,7 @@ describe('Toolbar', () => {
     expect(screen.getByTitle(/Log Window/)).toBeInTheDocument()
   })
 
-  it('disables compile when no changes or temporary', () => {
+  it('disables compile when no project is loaded', () => {
     render(<Toolbar />)
     expect(screen.getByTitle('Compile (Ctrl+S)')).toBeDisabled()
   })
@@ -298,7 +298,7 @@ describe('Toolbar', () => {
     expect(screen.getByTitle('Compile (Ctrl+S)')).not.toBeDisabled()
   })
 
-  it('keeps compile disabled when temporary even if changed', () => {
+  it('keeps compile enabled when temporary and loaded', () => {
     const clientInfo = createClientInfo()
     clientInfo.loaded = true
     useAppStore.getState().setProjectLoaded({
@@ -308,7 +308,7 @@ describe('Toolbar', () => {
     })
     useAppStore.getState().setProjectChanged(true)
     render(<Toolbar />)
-    expect(screen.getByTitle('Compile (Ctrl+S)')).toBeDisabled()
+    expect(screen.getByTitle('Compile (Ctrl+S)')).not.toBeDisabled()
   })
 
   it('dispatches action on button click', () => {

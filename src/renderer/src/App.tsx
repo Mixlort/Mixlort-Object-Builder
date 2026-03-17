@@ -1046,11 +1046,18 @@ export function App(): React.JSX.Element {
       try {
         const plan = createThingExportPlan({
           category: currentCategory,
-          selectedThingIds,
+          selectedThingIds:
+            selectedThingIds.length > 0
+              ? selectedThingIds
+              : selectedThingId !== null
+                ? [selectedThingId]
+                : [],
           things: state.things,
           effectIdFilterEnabled: result.effectIdFilterEnabled,
           effectIdFilterInput: result.effectIdFilterInput
         })
+
+        addLog('info', `Export plan: ${plan.entries.length} object(s)`)
 
         if (plan.entries.length === 0) {
           addLog('warning', 'No objects selected for export')
@@ -1180,7 +1187,7 @@ export function App(): React.JSX.Element {
         setLoadingLabel('')
       }
     },
-    [addLog, currentCategory, selectedThingIds]
+    [addLog, currentCategory, selectedThingIds, selectedThingId]
   )
 
   const handleImportConfirm = useCallback(

@@ -19,7 +19,7 @@ import {
   MENU_WINDOW_LOG,
   type MenuAction
 } from '../../../shared/menu-actions'
-import { useAppStore, selectProject, selectIsProjectLoaded } from '../stores'
+import { useAppStore, selectIsProjectLoaded } from '../stores'
 import {
   IconNewFile,
   IconOpen,
@@ -74,7 +74,6 @@ interface ToolbarProps {
 
 export function Toolbar({ onAction }: ToolbarProps): React.JSX.Element {
   const { t } = useTranslation()
-  const project = useAppStore(selectProject)
   const isLoaded = useAppStore(selectIsProjectLoaded)
 
   const dispatch = (action: MenuAction): void => onAction?.(action)
@@ -98,7 +97,7 @@ export function Toolbar({ onAction }: ToolbarProps): React.JSX.Element {
       <ToolbarButton
         icon={<IconSave size={16} />}
         title={`${t('menu.compile')} (Ctrl+S)`}
-        disabled={!project.changed || project.isTemporary}
+        disabled={!isLoaded}
         onClick={() => dispatch(MENU_FILE_COMPILE)}
       />
       <ToolbarButton
