@@ -1,5 +1,5 @@
 import type { ThingType, ThingCategory } from '../../types'
-import { ThingCategory as TC } from '../../types'
+import { createFrameGroup, createThingType, FrameGroupType, setThingFrameGroup, ThingCategory as TC } from '../../types'
 import type { ThingExportFormat } from '../../types/project'
 import { ImageFormat, OTFormat } from '../../types/project'
 import { parseIdList } from '../../utils'
@@ -84,6 +84,18 @@ function makeEffectsIdMap(entries: ThingExportEntry[]): EffectsIdMap {
   return { oldToNew, newToOld }
 }
 
+function createEmptyThing(category: ThingCategory, id: number): ThingType {
+  const thing = createThingType()
+  thing.id = id
+  thing.category = category
+
+  const frameGroup = createFrameGroup()
+  frameGroup.spriteIndex = [0]
+  setThingFrameGroup(thing, FrameGroupType.DEFAULT, frameGroup)
+
+  return thing
+}
+
 function joinPath(directory: string, fileName: string): string {
   return `${directory.replace(/[\\/]+$/, '')}/${fileName}`
 }
@@ -147,13 +159,13 @@ export function createThingExportPlan(params: CreateThingExportPlanParams): Thin
   const sourceEffects =
     parsedIds.length === 0
       ? [...things.effects].sort((a, b) => a.id - b.id)
-      : parsedIds.map((id) => effectsById.get(id)).filter((effect): effect is ThingType => !!effect)
+      : parsedIds.map((id) => effectsById.get(id) ?? createEmptyThing(TC.EFFECT, id))
 
   const missingEffectIds =
     parsedIds.length === 0 ? [] : parsedIds.filter((id) => !effectsById.has(id))
 
   const entries = sourceEffects.map((thing, index) => ({
-    sourceId: thing.id,
+    sourceId: parsedIds.length === 0 ? thing.id : parsedIds[index],
     exportId: index + 1,
     thing
   }))

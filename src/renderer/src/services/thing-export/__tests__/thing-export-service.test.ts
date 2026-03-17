@@ -1,5 +1,10 @@
 import { describe, it, expect, vi } from 'vitest'
-import { ThingCategory, createThingType, type ThingType } from '../../../types'
+import {
+  getThingFrameGroup,
+  ThingCategory,
+  createThingType,
+  type ThingType
+} from '../../../types'
 import { ImageFormat } from '../../../types/project'
 import { createThingExportPlan, exportThingPlanToFiles } from '../thing-export-service'
 
@@ -38,7 +43,7 @@ describe('thing-export-service', () => {
     expect(plan.filterApplied).toBe(true)
   })
 
-  it('keeps missing effect ids as warnings while exporting existing ones', () => {
+  it('creates empty placeholder effects for missing effect ids', () => {
     const plan = createThingExportPlan({
       category: ThingCategory.EFFECT,
       selectedThingIds: [],
@@ -56,9 +61,10 @@ describe('thing-export-service', () => {
       effectIdFilterInput: '1,3,9'
     })
 
-    expect(plan.entries.map((e) => e.sourceId)).toEqual([1, 3])
-    expect(plan.entries.map((e) => e.exportId)).toEqual([1, 2])
+    expect(plan.entries.map((e) => e.sourceId)).toEqual([1, 3, 9])
+    expect(plan.entries.map((e) => e.exportId)).toEqual([1, 2, 3])
     expect(plan.missingEffectIds).toEqual([9])
+    expect(getThingFrameGroup(plan.entries[2].thing, 0)?.spriteIndex).toEqual([0])
   })
 
   it('keeps default behavior when filter is disabled', () => {

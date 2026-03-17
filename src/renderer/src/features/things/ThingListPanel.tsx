@@ -16,6 +16,8 @@
 import React, { useState, useRef, useCallback, useMemo, useEffect } from 'react'
 import { workerService } from '../../workers/worker-service'
 import { compareFileNamesNaturally } from '../../utils'
+import { materializeImportedThingData } from '../../services/thing-import/thing-import-service'
+import { useSpriteStore } from '../../stores'
 import {
   useAppStore,
   useEditorStore,
@@ -811,16 +813,22 @@ export function ThingListPanel({
         try {
           const buffer = await file.arrayBuffer()
           const thingData = await workerService.decodeObd(new Uint8Array(buffer).buffer)
+          const imported = materializeImportedThingData({
+            thingData,
+            transparent: clientInfo?.features.transparency ?? false,
+            addSprite: (compressed) => useSpriteStore.getState().addSprite(compressed)
+          })
 
           // Add as new thing to the matching category
-          const category = thingData.thing.category
+          const category = imported.thing.category
           const allThings = appStore.getThingsByCategory(category)
           const maxId = allThings.length > 0 ? allThings[allThings.length - 1].id : 0
-          thingData.thing.id = maxId + 1
+          imported.thing.id = maxId + 1
 
-          appStore.addThing(category, thingData.thing)
+          appStore.addThing(category, imported.thing)
           appStore.setProjectChanged(true)
-          appStore.addLog('info', `Imported ${file.name} as ${category} #${thingData.thing.id}`)
+          appStore.setSpriteCount(useSpriteStore.getState().getSpriteCount())
+          appStore.addLog('info', `Imported ${file.name} as ${category} #${imported.thing.id}`)
         } catch (err) {
           const msg = err instanceof Error ? err.message : String(err)
           appStore.addLog('error', `Failed to import ${file.name}: ${msg}`)

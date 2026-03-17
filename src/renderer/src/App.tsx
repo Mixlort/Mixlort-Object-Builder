@@ -99,6 +99,7 @@ import {
   exportThingPlanToFiles,
   type ThingExportEntry
 } from './services/thing-export'
+import { materializeImportedThingData } from './services/thing-import/thing-import-service'
 import {
   loadServerItems,
   saveServerItems,
@@ -1073,7 +1074,7 @@ export function App(): React.JSX.Element {
           effectIdFilterInput: result.effectIdFilterInput
         })
 
-        addLog('info', `Export plan: ${plan.entries.length} object(s)`)
+      addLog('info', `Export plan: ${plan.entries.length} object(s)`)
 
         if (plan.entries.length === 0) {
           addLog('warning', 'No objects selected for export')
@@ -1083,7 +1084,7 @@ export function App(): React.JSX.Element {
         if (plan.missingEffectIds.length > 0) {
           addLog(
             'warning',
-            `Effects IDs not found: ${plan.missingEffectIds.join(', ')} (continuing with existing IDs)`
+            `Effects IDs not found: ${plan.missingEffectIds.join(', ')} (exporting empty placeholders)`
           )
         }
 
@@ -1208,11 +1209,83 @@ export function App(): React.JSX.Element {
   )
 
   const handleImportConfirm = useCallback(
-    (result: ImportThingResult) => {
+    async (result: ImportThingResult) => {
       addLog('info', `Importing: ${result.filePath} (${result.action})`)
-      // TODO: Wire to actual import logic in future steps
+
+      const appState = useAppStore.getState()
+      const importClientInfo = appState.clientInfo
+      if (!appState.project.loaded || !importClientInfo) {
+        addLog('warning', 'No project loaded')
+        return
+      }
+
+      setIsLoading(true)
+      setLoadingLabel('Importing object...')
+      appState.setLocked(true)
+
+      try {
+        const imported = materializeImportedThingData({
+          thingData: result.thingData,
+          transparent: importClientInfo.features.transparency,
+          addSprite: (compressed) => useSpriteStore.getState().addSprite(compressed)
+        })
+
+        const category = imported.thing.category
+        let targetId: number
+
+        if (result.action === 'replace') {
+          if (selectedThingId === null) {
+            throw new Error('No object selected for replace')
+          }
+
+          if (category !== currentCategory) {
+            throw new Error(
+              `Cannot replace ${currentCategory} with imported ${category}. Categories must match.`
+            )
+          }
+
+          targetId = selectedThingId
+          imported.thing.id = targetId
+          appState.updateThing(category, targetId, imported.thing)
+
+          const editorThing = useEditorStore.getState().editingThingData?.thing
+          if (editorThing && editorThing.category === category && editorThing.id === targetId) {
+            loadThingIntoEditor(targetId, category)
+          }
+        } else {
+          const categoryThings = appState.getThingsByCategory(category)
+          const minId =
+            category === ThingCategory.ITEM
+              ? importClientInfo.minItemId
+              : category === ThingCategory.OUTFIT
+                ? importClientInfo.minOutfitId
+                : category === ThingCategory.EFFECT
+                  ? importClientInfo.minEffectId
+                  : importClientInfo.minMissileId
+
+          targetId = getMaxThingId(categoryThings, minId - 1) + 1
+          imported.thing.id = targetId
+          appState.addThing(category, imported.thing)
+          appState.selectThing(targetId)
+        }
+
+        appState.setSpriteCount(useSpriteStore.getState().getSpriteCount())
+        appState.setProjectChanged(true)
+        await window.api.menu.updateState({ clientChanged: true })
+
+        addLog('info', `Import complete: ${getFileName(result.filePath)} -> ${category} #${targetId}`)
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err)
+        addLog('error', `Failed to import object: ${message}`)
+        setErrorMessages([message])
+        setActiveDialog('error')
+      } finally {
+        useAppStore.getState().setLocked(false)
+        setIsLoading(false)
+        setLoadingLabel('')
+      }
     },
-    [addLog]
+    [addLog, currentCategory, loadThingIntoEditor, selectedThingId]
   )
 
   const handleBulkEditConfirm = useCallback(
