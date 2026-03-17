@@ -6,7 +6,7 @@
  * and version. Optional server items directory for OTB/XML loading.
  */
 
-import React, { useState, useCallback, useMemo } from 'react'
+import React, { useState, useCallback, useMemo, useEffect } from 'react'
 import { useTranslation } from 'react-i18next'
 import {
   Modal,
@@ -77,6 +77,12 @@ export function OpenAssetsDialog({
   const [serverInfo, setServerInfo] = useState<ServerFilesInfo | null>(null)
   const [selectedDimensionIndex, setSelectedDimensionIndex] = useState('0')
   const [selectedAttributeServer, setSelectedAttributeServer] = useState(DEFAULT_ATTRIBUTE_SERVER)
+  const [recentClientDirectories, setRecentClientDirectories] = useState<string[]>([])
+  const [recentClientDirectory, setRecentClientDirectory] = useState('')
+  const [recentLastDirectory, setRecentLastDirectory] = useState<string | null>(lastDirectory ?? null)
+  const [recentLastServerItemsDirectory, setRecentLastServerItemsDirectory] = useState<string | null>(
+    lastServerItemsDirectory ?? null
+  )
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
   const { flags, setFlag, setFlags } = useFeatureFlags()
@@ -91,93 +97,143 @@ export function OpenAssetsDialog({
     []
   )
 
+  const recentClientDirectoryOptions = useMemo(
+    () => [
+      { value: '', label: 'Select recent folder...' },
+      ...recentClientDirectories.map((directory) => ({ value: directory, label: directory }))
+    ],
+    [recentClientDirectories]
+  )
+
+  useEffect(() => {
+    if (!open || !window.api?.recent) return
+
+    let cancelled = false
+
+    const loadRecentDirectories = async () => {
+      await window.api.recent.load()
+      const recent = await window.api.recent.getAll()
+      if (cancelled) return
+
+      setRecentClientDirectories(recent.recentClientDirectories ?? [])
+      setRecentLastDirectory(recent.lastDirectory ?? lastDirectory ?? null)
+      setRecentLastServerItemsDirectory(
+        recent.lastServerItemsDirectory ?? lastServerItemsDirectory ?? null
+      )
+    }
+
+    loadRecentDirectories().catch(() => {
+      if (cancelled) return
+      setRecentClientDirectories(lastDirectory ? [lastDirectory] : [])
+      setRecentLastDirectory(lastDirectory ?? null)
+      setRecentLastServerItemsDirectory(lastServerItemsDirectory ?? null)
+    })
+
+    return () => {
+      cancelled = true
+    }
+  }, [open, lastDirectory, lastServerItemsDirectory])
+
+  const loadClientDirectory = useCallback(
+    async (dir: string) => {
+      setClientDirectory(dir)
+      setRecentClientDirectory(dir)
+      setError(null)
+      setLoading(true)
+
+      try {
+        // Discover DAT/SPR files in the directory
+        const discovery = await window.api.project.discoverClientFiles(dir)
+
+        if (!discovery.datFile || !discovery.sprFile) {
+          setError('No DAT/SPR files found in the selected folder.')
+          setClientInfo(null)
+          setLoading(false)
+          return
+        }
+
+        // Read file headers to get signatures and counts
+        const datBuffer = await window.api.file.readBinary(discovery.datFile)
+        const sprBuffer = await window.api.file.readBinary(discovery.sprFile)
+
+        // Parse DAT header: signature (u32) + 4x maxId (u16)
+        const datView = new DataView(datBuffer)
+        const datSignature = datView.getUint32(0, true)
+        const maxItemId = datView.getUint16(4, true)
+        const maxOutfitId = datView.getUint16(6, true)
+        const maxEffectId = datView.getUint16(8, true)
+        const maxMissileId = datView.getUint16(10, true)
+
+        // Parse SPR header: signature (u32) + count (u16 or u32)
+        const sprView = new DataView(sprBuffer)
+        const sprSignature = sprView.getUint32(0, true)
+
+        // Detect version by signatures
+        const version = findVersionBySignatures(datSignature, sprSignature) ?? null
+        const isExtended = version ? version.value >= 960 : false
+        const spritesCount = isExtended ? sprView.getUint32(4, true) : sprView.getUint16(4, true)
+
+        const info: ClientFilesInfo = {
+          datFile: discovery.datFile,
+          sprFile: discovery.sprFile,
+          datSignature,
+          sprSignature,
+          itemsCount: maxItemId,
+          outfitsCount: maxOutfitId,
+          effectsCount: maxEffectId,
+          missilesCount: maxMissileId,
+          spritesCount,
+          version
+        }
+
+        setClientInfo(info)
+
+        if (version) {
+          setFlags(
+            applyVersionDefaults(
+              {
+                extended: false,
+                transparency: false,
+                improvedAnimations: false,
+                frameGroups: false
+              },
+              version.value
+            )
+          )
+        }
+
+        await window.api.recent.set('lastDirectory', dir)
+        setRecentLastDirectory(dir)
+        setRecentClientDirectories((current) => [dir, ...current.filter((path) => path !== dir)].slice(0, 8))
+      } catch (err) {
+        setError(err instanceof Error ? err.message : 'Failed to read client files.')
+        setClientInfo(null)
+      } finally {
+        setLoading(false)
+      }
+    },
+    [setFlags]
+  )
+
   const handleBrowseClient = useCallback(async () => {
     if (!window.api?.file) return
 
     const result = await window.api.file.showDirectoryDialog({
       title: 'Select Client Folder',
-      defaultPath: lastDirectory ?? undefined
+      defaultPath: recentLastDirectory ?? lastDirectory ?? undefined
     })
 
     if (result.canceled || !result.directoryPath) return
 
-    const dir = result.directoryPath
-    setClientDirectory(dir)
-    setError(null)
-    setLoading(true)
-
-    try {
-      // Discover DAT/SPR files in the directory
-      const discovery = await window.api.project.discoverClientFiles(dir)
-
-      if (!discovery.datFile || !discovery.sprFile) {
-        setError('No DAT/SPR files found in the selected folder.')
-        setClientInfo(null)
-        setLoading(false)
-        return
-      }
-
-      // Read file headers to get signatures and counts
-      const datBuffer = await window.api.file.readBinary(discovery.datFile)
-      const sprBuffer = await window.api.file.readBinary(discovery.sprFile)
-
-      // Parse DAT header: signature (u32) + 4x maxId (u16)
-      const datView = new DataView(datBuffer)
-      const datSignature = datView.getUint32(0, true)
-      const maxItemId = datView.getUint16(4, true)
-      const maxOutfitId = datView.getUint16(6, true)
-      const maxEffectId = datView.getUint16(8, true)
-      const maxMissileId = datView.getUint16(10, true)
-
-      // Parse SPR header: signature (u32) + count (u16 or u32)
-      const sprView = new DataView(sprBuffer)
-      const sprSignature = sprView.getUint32(0, true)
-
-      // Detect version by signatures
-      const version = findVersionBySignatures(datSignature, sprSignature) ?? null
-      const isExtended = version ? version.value >= 960 : false
-      const spritesCount = isExtended ? sprView.getUint32(4, true) : sprView.getUint16(4, true)
-
-      const info: ClientFilesInfo = {
-        datFile: discovery.datFile,
-        sprFile: discovery.sprFile,
-        datSignature,
-        sprSignature,
-        itemsCount: maxItemId,
-        outfitsCount: maxOutfitId,
-        effectsCount: maxEffectId,
-        missilesCount: maxMissileId,
-        spritesCount,
-        version
-      }
-
-      setClientInfo(info)
-
-      if (version) {
-        setFlags(
-          applyVersionDefaults(
-            { extended: false, transparency: false, improvedAnimations: false, frameGroups: false },
-            version.value
-          )
-        )
-      }
-
-      // Save recent directory
-      await window.api.recent.set('lastDirectory', dir)
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to read client files.')
-      setClientInfo(null)
-    } finally {
-      setLoading(false)
-    }
-  }, [lastDirectory, setFlags])
+    await loadClientDirectory(result.directoryPath)
+  }, [recentLastDirectory, lastDirectory, loadClientDirectory])
 
   const handleBrowseServer = useCallback(async () => {
     if (!window.api?.file) return
 
     const result = await window.api.file.showDirectoryDialog({
       title: 'Select Server Items Folder',
-      defaultPath: lastServerItemsDirectory ?? undefined
+      defaultPath: recentLastServerItemsDirectory ?? lastServerItemsDirectory ?? undefined
     })
 
     if (result.canceled || !result.directoryPath) return
@@ -189,10 +245,11 @@ export function OpenAssetsDialog({
       const discovery = await window.api.project.discoverServerItemFiles(dir)
       setServerInfo({ otbFile: discovery.otbFile, xmlFile: discovery.xmlFile })
       await window.api.recent.set('lastServerItemsDirectory', dir)
+      setRecentLastServerItemsDirectory(dir)
     } catch {
       setServerInfo(null)
     }
-  }, [lastServerItemsDirectory])
+  }, [recentLastServerItemsDirectory, lastServerItemsDirectory])
 
   const canConfirm = clientInfo?.version != null && !loading
 
@@ -225,6 +282,7 @@ export function OpenAssetsDialog({
     setClientInfo(null)
     setServerDirectory('')
     setServerInfo(null)
+    setRecentClientDirectory('')
     setError(null)
     onClose()
   }, [onClose])
@@ -250,7 +308,22 @@ export function OpenAssetsDialog({
       <div className="flex flex-col gap-3">
         {/* Client folder */}
         <FieldGroup label={t('controls.clientFolder')}>
-          <BrowseField label="Folder" value={clientDirectory} onBrowse={handleBrowseClient} />
+          <div className="flex flex-col gap-2">
+            <BrowseField label="Folder" value={clientDirectory} onBrowse={handleBrowseClient} />
+            {recentClientDirectories.length > 0 && (
+              <SelectField
+                label="Recent"
+                value={recentClientDirectory}
+                onChange={(value) => {
+                  setRecentClientDirectory(value)
+                  if (value) {
+                    void loadClientDirectory(value)
+                  }
+                }}
+                options={recentClientDirectoryOptions}
+              />
+            )}
+          </div>
         </FieldGroup>
 
         {loading && (

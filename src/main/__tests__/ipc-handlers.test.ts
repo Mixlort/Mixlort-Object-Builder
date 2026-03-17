@@ -207,12 +207,14 @@ describe('IPC Types', () => {
       lastDirectory: '/a',
       lastMergeDirectory: '/b',
       lastIODirectory: null,
-      lastServerItemsDirectory: null
+      lastServerItemsDirectory: null,
+      recentClientDirectories: ['/a']
     }
     expect(data).toHaveProperty('lastDirectory')
     expect(data).toHaveProperty('lastMergeDirectory')
     expect(data).toHaveProperty('lastIODirectory')
     expect(data).toHaveProperty('lastServerItemsDirectory')
+    expect(data).toHaveProperty('recentClientDirectories')
   })
 
   it('ClientFilesDiscovery has nullable fields', () => {

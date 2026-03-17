@@ -113,6 +113,7 @@ export interface RecentDirectoriesData {
   lastMergeDirectory: string | null
   lastIODirectory: string | null
   lastServerItemsDirectory: string | null
+  recentClientDirectories: string[]
 }
 
 // ---------------------------------------------------------------------------

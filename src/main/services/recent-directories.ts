@@ -30,6 +30,7 @@ interface RecentDirectoriesData {
   lastMergeDirectory: string | null
   lastIODirectory: string | null
   lastServerItemsDirectory: string | null
+  recentClientDirectories: string[]
 }
 
 // ---------------------------------------------------------------------------
@@ -40,8 +41,11 @@ const DEFAULT_DATA: RecentDirectoriesData = {
   lastDirectory: null,
   lastMergeDirectory: null,
   lastIODirectory: null,
-  lastServerItemsDirectory: null
+  lastServerItemsDirectory: null,
+  recentClientDirectories: []
 }
+
+const MAX_RECENT_CLIENT_DIRECTORIES = 8
 
 let data: RecentDirectoriesData = { ...DEFAULT_DATA }
 let loaded = false
@@ -74,7 +78,12 @@ export async function loadRecentDirectories(): Promise<void> {
       lastDirectory: parsed.lastDirectory ?? null,
       lastMergeDirectory: parsed.lastMergeDirectory ?? null,
       lastIODirectory: parsed.lastIODirectory ?? null,
-      lastServerItemsDirectory: parsed.lastServerItemsDirectory ?? null
+      lastServerItemsDirectory: parsed.lastServerItemsDirectory ?? null,
+      recentClientDirectories: Array.isArray(parsed.recentClientDirectories)
+        ? parsed.recentClientDirectories.filter((value): value is string => typeof value === 'string')
+        : parsed.lastDirectory
+          ? [parsed.lastDirectory]
+          : []
     }
   } catch {
     // File doesn't exist or is invalid - use defaults
@@ -110,6 +119,14 @@ export async function setRecentDirectory(
   directoryPath: string | null
 ): Promise<void> {
   data[key] = directoryPath
+
+  if (key === 'lastDirectory' && directoryPath) {
+    data.recentClientDirectories = [
+      directoryPath,
+      ...data.recentClientDirectories.filter((path) => path !== directoryPath)
+    ].slice(0, MAX_RECENT_CLIENT_DIRECTORIES)
+  }
+
   await saveRecentDirectories()
 }
 

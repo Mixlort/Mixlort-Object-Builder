@@ -434,7 +434,8 @@ describe('recent-directories (pure logic)', () => {
       lastDirectory: '/path/to/client',
       lastMergeDirectory: '/path/to/merge',
       lastIODirectory: null,
-      lastServerItemsDirectory: '/path/to/server'
+      lastServerItemsDirectory: '/path/to/server',
+      recentClientDirectories: ['/path/to/client', '/path/to/client-2']
     }
 
     await writeTextFile(filePath, JSON.stringify(data, null, 2))
@@ -445,6 +446,7 @@ describe('recent-directories (pure logic)', () => {
     expect(parsed.lastMergeDirectory).toBe('/path/to/merge')
     expect(parsed.lastIODirectory).toBeNull()
     expect(parsed.lastServerItemsDirectory).toBe('/path/to/server')
+    expect(parsed.recentClientDirectories).toEqual(['/path/to/client', '/path/to/client-2'])
   })
 
   it('should handle missing keys gracefully', async () => {
@@ -456,6 +458,7 @@ describe('recent-directories (pure logic)', () => {
 
     expect(parsed.lastDirectory).toBe('/only/this')
     expect(parsed.lastMergeDirectory).toBeUndefined()
+    expect(parsed.recentClientDirectories).toBeUndefined()
   })
 
   it('should handle empty JSON file', async () => {
@@ -495,5 +498,7 @@ describe('recent-directories (pure logic)', () => {
 
     expect(data.lastDirectory).toBeNull()
     expect(data.lastMergeDirectory).toBeNull()
+    expect(data.lastIODirectory).toBeNull()
+    expect(data.lastServerItemsDirectory).toBeNull()
   })
 })
