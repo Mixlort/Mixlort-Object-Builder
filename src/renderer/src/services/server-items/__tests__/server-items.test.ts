@@ -24,6 +24,8 @@ import {
   getItemByServerId,
   getItemsByClientId,
   getFirstItemByClientId,
+  getEditableXmlAttributes,
+  setEditableXmlAttributes,
   applyServerItemNames,
   setAttributeServer,
   getAttributeServerName,
@@ -209,6 +211,77 @@ describe('computeSpriteHash', () => {
     const result = computeSpriteHash(thing, (id) => (id <= 2 ? solid : null), false)
     expect(result).toHaveLength(16)
     expect(result.some((b) => b !== 0)).toBe(true)
+  })
+})
+
+// =========================================================================
+// Editable XML Attributes
+// =========================================================================
+
+describe('editable XML attributes', () => {
+  beforeEach(() => {
+    resetServerItemsService()
+  })
+
+  it('should expose only string XML attributes for editor usage', () => {
+    const item = createServerItem()
+    item.id = 1000
+    item.clientId = 100
+
+    loadServerItems({ otbBuffer: makeOtbBuffer([item]) })
+
+    const loaded = getFirstItemByClientId(100)
+    expect(loaded).toBeDefined()
+
+    loaded!.xmlAttributes = {
+      name: 'Sword',
+      article: 'a',
+      attribute: {
+        key: 'attack',
+        value: '35'
+      }
+    }
+
+    expect(getEditableXmlAttributes(100)).toEqual({
+      name: 'Sword',
+      article: 'a'
+    })
+  })
+
+  it('should update flat XML attributes while preserving nested ones', () => {
+    const first = createServerItem()
+    first.id = 1000
+    first.clientId = 100
+
+    const second = createServerItem()
+    second.id = 1001
+    second.clientId = 100
+
+    loadServerItems({ otbBuffer: makeOtbBuffer([first, second]) })
+
+    for (const item of getItemsByClientId(100)) {
+      item.xmlAttributes = {
+        name: 'Sword',
+        article: 'a',
+        attribute: {
+          key: 'attack',
+          value: '35'
+        }
+      }
+    }
+
+    expect(setEditableXmlAttributes(100, { name: 'Golden Sword', plural: 'golden swords' })).toBe(2)
+
+    for (const item of getItemsByClientId(100)) {
+      expect(item.xmlAttributes).toEqual({
+        attribute: {
+          key: 'attack',
+          value: '35'
+        },
+        name: 'Golden Sword',
+        plural: 'golden swords'
+      })
+    }
   })
 })
 

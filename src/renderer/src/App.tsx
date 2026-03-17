@@ -104,6 +104,8 @@ import {
   saveServerItems,
   isLoaded as isServerItemsLoaded,
   applyServerItemNames,
+  getEditableXmlAttributes,
+  setEditableXmlAttributes,
   unloadServerItems,
   setAttributeServer
 } from './services/server-items'
@@ -376,7 +378,8 @@ export function App(): React.JSX.Element {
         clientVersion: ci.clientVersion,
         thing,
         sprites: new Map([[FrameGroupType.DEFAULT, []]]),
-        xmlAttributes: null
+        xmlAttributes:
+          cat === ThingCategory.ITEM ? getEditableXmlAttributes(thingId) : null
       }
       setEditingThingData(thingData)
     },
@@ -387,11 +390,16 @@ export function App(): React.JSX.Element {
   const saveCurrentThingChanges = useCallback(() => {
     const editorState = useEditorStore.getState()
     if (editorState.editingThingData && editorState.editingChanged) {
-      const { thing } = editorState.editingThingData
-      useAppStore.getState().updateThing(currentCategory, thing.id, thing)
+      const { thing, xmlAttributes } = editorState.editingThingData
+
+      if (thing.category === ThingCategory.ITEM) {
+        setEditableXmlAttributes(thing.id, xmlAttributes)
+      }
+
+      useAppStore.getState().updateThing(thing.category, thing.id, thing)
       editorState.setEditingChanged(false)
     }
-  }, [currentCategory])
+  }, [])
 
   // Start editing a thing (called on double-click, Edit button, or context menu Edit)
   // Handles auto-save or confirmation when switching objects with unsaved changes.

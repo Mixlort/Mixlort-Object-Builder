@@ -22,6 +22,8 @@ export {
   getItemByServerId,
   getItemsByClientId,
   getFirstItemByClientId,
+  getEditableXmlAttributes,
+  setEditableXmlAttributes,
   applyServerItemNames,
   setAttributeServer,
   unloadServerItems,

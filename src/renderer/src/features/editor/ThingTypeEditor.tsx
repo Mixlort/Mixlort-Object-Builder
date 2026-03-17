@@ -35,6 +35,7 @@ import type { ClientInfo } from '../../types/project'
 import { SpriteRenderer } from '../sprites/SpriteRenderer'
 import { AttributesEditor } from './AttributesEditor'
 import { rgbaToArgb, compressPixels } from '../../services/spr'
+import { setEditableXmlAttributes } from '../../services/server-items'
 
 // ---------------------------------------------------------------------------
 // Sprite sheet drag-and-drop helpers
@@ -1727,15 +1728,19 @@ export function ThingTypeEditor(): React.JSX.Element {
   const setEditingThingData = useEditorStore((s) => s.setEditingThingData)
   const setEditingChanged = useEditorStore((s) => s.setEditingChanged)
   const clientInfo = useAppStore((s) => s.clientInfo)
-  const currentCategory = useAppStore((s) => s.currentCategory)
   const updateThing = useAppStore((s) => s.updateThing)
   const [activeTab, setActiveTab] = useState<EditorTab>('texture')
 
   const handleSave = useCallback(() => {
     if (!thingData || !editingChanged) return
-    updateThing(currentCategory, thingData.thing.id, thingData.thing)
+
+    if (thingData.thing.category === ThingCategory.ITEM) {
+      setEditableXmlAttributes(thingData.thing.id, thingData.xmlAttributes)
+    }
+
+    updateThing(thingData.thing.category, thingData.thing.id, thingData.thing)
     setEditingChanged(false)
-  }, [thingData, editingChanged, currentCategory, updateThing, setEditingChanged])
+  }, [thingData, editingChanged, updateThing, setEditingChanged])
 
   const handleClose = useCallback(() => {
     setEditingThingData(null)

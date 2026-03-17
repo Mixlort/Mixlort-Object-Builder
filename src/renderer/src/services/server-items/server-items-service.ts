@@ -9,7 +9,7 @@
  * and OtbSync usage.
  */
 
-import { type ThingType, type ServerItem, cloneThingType } from '../../types'
+import { type ThingType, type ServerItem, type XmlAttributeValue, cloneThingType } from '../../types'
 import { readOtb, writeOtb, ServerItemList } from '../otb'
 import { readItemsXml, writeItemsXml, type ItemsXmlWriteOptions } from '../items-xml'
 import {
@@ -310,6 +310,65 @@ export function getItemsByClientId(clientId: number): ServerItem[] {
  */
 export function getFirstItemByClientId(clientId: number): ServerItem | undefined {
   return _itemList?.getFirstItemByClientId(clientId)
+}
+
+/**
+ * Gets string-based XML attributes for the first ServerItem matching a client ID.
+ * Nested XML attributes are excluded because the editor only exposes flat key/value pairs.
+ */
+export function getEditableXmlAttributes(clientId: number): Record<string, string> | null {
+  const item = getFirstItemByClientId(clientId)
+  if (!item?.xmlAttributes) {
+    return null
+  }
+
+  const editableEntries = Object.entries(item.xmlAttributes).filter(
+    (entry): entry is [string, string] => typeof entry[1] === 'string'
+  )
+
+  return editableEntries.length > 0 ? Object.fromEntries(editableEntries) : null
+}
+
+/**
+ * Replaces string-based XML attributes for all ServerItems matching a client ID while
+ * preserving nested XML attributes that are not editable in the renderer.
+ *
+ * @returns Number of server items updated
+ */
+export function setEditableXmlAttributes(
+  clientId: number,
+  xmlAttributes: Record<string, string> | null
+): number {
+  if (!_itemList) {
+    return 0
+  }
+
+  const items = _itemList.getItemsByClientId(clientId)
+  if (items.length === 0) {
+    return 0
+  }
+
+  for (const item of items) {
+    const nextAttributes: Record<string, XmlAttributeValue> = {}
+
+    if (item.xmlAttributes) {
+      for (const [key, value] of Object.entries(item.xmlAttributes)) {
+        if (typeof value !== 'string') {
+          nextAttributes[key] = value
+        }
+      }
+    }
+
+    if (xmlAttributes) {
+      for (const [key, value] of Object.entries(xmlAttributes)) {
+        nextAttributes[key] = value
+      }
+    }
+
+    item.xmlAttributes = Object.keys(nextAttributes).length > 0 ? nextAttributes : null
+  }
+
+  return items.length
 }
 
 function getServerItemDisplayName(item: ServerItem | undefined): string {
