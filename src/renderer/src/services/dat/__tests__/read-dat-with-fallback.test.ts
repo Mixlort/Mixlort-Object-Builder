@@ -4,6 +4,7 @@ import { readDatWithFallback } from '../read-dat-with-fallback'
 
 describe('readDatWithFallback', () => {
   it('retries without frame groups for unknown-flag parse errors on modern clients', async () => {
+    const sourceBuffer = new ArrayBuffer(8)
     const readDat = vi
       .fn()
       .mockRejectedValueOnce(new Error('Unknown flag 0xec (previous: 0x1) for effect id 365'))
@@ -22,7 +23,7 @@ describe('readDatWithFallback', () => {
     const features = createClientFeatures(true, false, true, true)
 
     const result = await readDatWithFallback({
-      buffer: new ArrayBuffer(0),
+      buffer: sourceBuffer,
       version: 1098,
       features,
       defaultDurations: {},
@@ -40,6 +41,8 @@ describe('readDatWithFallback', () => {
       expect.objectContaining({ frameGroups: false }),
       {}
     )
+    expect(readDat.mock.calls[0][0]).not.toBe(sourceBuffer)
+    expect(readDat.mock.calls[1][0]).not.toBe(sourceBuffer)
   })
 
   it('does not retry when frame groups are already disabled', async () => {

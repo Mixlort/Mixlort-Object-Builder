@@ -21,6 +21,10 @@ export interface ReadDatWithFallbackResult {
   originalError: string | null
 }
 
+function cloneArrayBuffer(buffer: ArrayBuffer): ArrayBuffer {
+  return buffer.slice(0)
+}
+
 function getErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
 }
@@ -46,7 +50,7 @@ export async function readDatWithFallback({
   readDat
 }: ReadDatWithFallbackParams): Promise<ReadDatWithFallbackResult> {
   try {
-    const result = await readDat(buffer, version, features, defaultDurations)
+    const result = await readDat(cloneArrayBuffer(buffer), version, features, defaultDurations)
     return { result, features, didFallback: false, originalError: null }
   } catch (error) {
     if (!shouldRetryWithoutFrameGroups(error, version, features)) {
@@ -54,7 +58,12 @@ export async function readDatWithFallback({
     }
 
     const fallbackFeatures: ClientFeatures = { ...features, frameGroups: false }
-    const result = await readDat(buffer, version, fallbackFeatures, defaultDurations)
+    const result = await readDat(
+      cloneArrayBuffer(buffer),
+      version,
+      fallbackFeatures,
+      defaultDurations
+    )
 
     return {
       result,
