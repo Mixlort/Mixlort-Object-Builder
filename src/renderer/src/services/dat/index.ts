@@ -6,6 +6,7 @@ export {
   getPropertyReader,
   type ReadPropertiesFn
 } from './dat-reader'
+export { readDatWithFallback, type ReadDatWithFallbackResult } from './read-dat-with-fallback'
 export {
   writeDat,
   getPropertyWriters,

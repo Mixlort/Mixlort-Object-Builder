@@ -88,6 +88,7 @@ import {
   type BulkEditResult
 } from './features/dialogs'
 import { createObjectBuilderSettings, type ObjectBuilderSettings } from '../../shared/settings'
+import { readDatWithFallback } from './services/dat'
 import { createOtfiData, parseOtfi, writeOtfi } from './services/otfi'
 import { clearThumbnailCache } from './hooks/use-sprite-thumbnail'
 import { useKeyboardShortcuts } from './hooks/use-keyboard-shortcuts'
@@ -620,13 +621,25 @@ export function App(): React.JSX.Element {
           missile: getDefaultDuration(settings, ThingCategory.MISSILE)
         }
 
-        // Parse DAT (offloaded to Web Worker)
-        const datResult = await workerService.readDat(
-          loadResult.datBuffer,
-          result.version.value,
+        // Parse DAT (offloaded to Web Worker) with a compatibility fallback for
+        // custom 10.x clients that keep modern flags but do not encode frame groups.
+        const datRead = await readDatWithFallback({
+          buffer: loadResult.datBuffer,
+          version: result.version.value,
           features,
-          defaultDurations
-        )
+          defaultDurations,
+          readDat: (buffer, version, readFeatures, durations) =>
+            workerService.readDat(buffer, version, readFeatures, durations)
+        })
+        const datResult = datRead.result
+        const effectiveFeatures = datRead.features
+
+        if (datRead.didFallback) {
+          addLog(
+            'warning',
+            `DAT compatibility fallback: reopened with Frame Groups disabled (${datRead.originalError})`
+          )
+        }
         addLog(
           'info',
           `DAT: ${datResult.items.length} items, ${datResult.outfits.length} outfits, ${datResult.effects.length} effects, ${datResult.missiles.length} missiles`
@@ -634,7 +647,7 @@ export function App(): React.JSX.Element {
 
         // Load sprites lazily via SpriteAccessor (no upfront extraction)
         setLoadingLabel('Indexing sprites...')
-        useSpriteStore.getState().loadFromBuffer(loadResult.sprBuffer, features.extended)
+        useSpriteStore.getState().loadFromBuffer(loadResult.sprBuffer, effectiveFeatures.extended)
         const sprAccessor = useSpriteStore.getState().spriteAccessor!
         addLog('info', `SPR: ${sprAccessor.spriteCount} sprites (lazy loading)`)
 
@@ -684,6 +697,8 @@ export function App(): React.JSX.Element {
           }
         }
 
+        await window.api.project.updateFeatures(featurePayload(effectiveFeatures))
+
         // Build ClientInfo
         setLoadingLabel('Populating stores...')
         const fileName = getBaseName(result.datFile)
@@ -703,7 +718,7 @@ export function App(): React.JSX.Element {
           maxMissileId: datResult.maxMissileId,
           minSpriteId: 1,
           maxSpriteId: sprAccessor.spriteCount,
-          features,
+          features: effectiveFeatures,
           loaded: true,
           isTemporary: false,
           otbLoaded: otbInfo !== null,
@@ -1548,6 +1563,7 @@ export function App(): React.JSX.Element {
               }
             : null
         }
+        currentFeatures={clientInfo?.features ?? null}
         serverItemsLoaded={clientInfo?.otbLoaded ?? false}
       />
 

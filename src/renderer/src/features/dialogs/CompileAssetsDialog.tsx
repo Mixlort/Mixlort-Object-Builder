@@ -20,6 +20,7 @@ import {
 import { VERSIONS } from '../../data/versions'
 import { ATTRIBUTE_SERVERS, DEFAULT_ATTRIBUTE_SERVER } from '../../data/attribute-servers'
 import { OTFormat } from '../../types/project'
+import type { ClientFeatures } from '../../types/version'
 import { FeatureFlagsGroup } from './FeatureFlagsGroup'
 import { useFeatureFlags, applyVersionDefaults } from './useFeatureFlags'
 import type { Version } from '../../types/version'
@@ -43,6 +44,7 @@ interface CompileAssetsDialogProps {
   onClose: () => void
   onConfirm: (result: CompileAssetsResult) => void
   currentVersion?: Version | null
+  currentFeatures?: ClientFeatures | null
   serverItemsLoaded?: boolean
   lastDirectory?: string | null
 }
@@ -52,6 +54,7 @@ export function CompileAssetsDialog({
   onClose,
   onConfirm,
   currentVersion,
+  currentFeatures,
   serverItemsLoaded = false,
   lastDirectory
 }: CompileAssetsDialogProps): React.JSX.Element {
@@ -82,7 +85,14 @@ export function CompileAssetsDialog({
   React.useEffect(() => {
     if (open) {
       setSelectedVersionIndex(initialVersionIndex)
-      if (currentVersion) {
+      if (currentFeatures) {
+        setFlags({
+          extended: currentFeatures.extended,
+          transparency: currentFeatures.transparency,
+          improvedAnimations: currentFeatures.improvedAnimations,
+          frameGroups: currentFeatures.frameGroups
+        })
+      } else if (currentVersion) {
         setFlags(
           applyVersionDefaults(
             { extended: false, transparency: false, improvedAnimations: false, frameGroups: false },
@@ -91,7 +101,7 @@ export function CompileAssetsDialog({
         )
       }
     }
-  }, [open, initialVersionIndex, currentVersion, setFlags])
+  }, [open, initialVersionIndex, currentVersion, currentFeatures, setFlags])
 
   const versionOptions = useMemo(
     () => [
@@ -288,6 +298,7 @@ export function CompileAssetsDialog({
           flags={flags}
           versionValue={selectedVersion?.value ?? 0}
           onFlagChange={setFlag}
+          forceFrameGroups={false}
         />
       </div>
     </Modal>

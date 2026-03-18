@@ -5,7 +5,7 @@
 
 import React from 'react'
 import { FieldGroup, CheckboxField } from '../../components/Modal'
-import type { FeatureFlags } from './useFeatureFlags'
+import type { FeatureFlags, FeatureForceOptions } from './useFeatureFlags'
 import { isFeatureForced } from './useFeatureFlags'
 
 interface FeatureFlagsGroupProps {
@@ -13,15 +13,17 @@ interface FeatureFlagsGroupProps {
   versionValue: number
   onFlagChange: (key: keyof FeatureFlags, value: boolean) => void
   compact?: boolean
+  forceFrameGroups?: FeatureForceOptions['forceFrameGroups']
 }
 
 export function FeatureFlagsGroup({
   flags,
   versionValue,
   onFlagChange,
-  compact = false
+  compact = false,
+  forceFrameGroups = true
 }: FeatureFlagsGroupProps): React.JSX.Element {
-  const forced = isFeatureForced(versionValue)
+  const forced = isFeatureForced(versionValue, { forceFrameGroups })
 
   return (
     <FieldGroup label="Options" compact={compact}>

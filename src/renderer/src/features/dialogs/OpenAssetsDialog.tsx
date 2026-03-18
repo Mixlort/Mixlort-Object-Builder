@@ -428,6 +428,7 @@ export function OpenAssetsDialog({
           versionValue={clientInfo?.version?.value ?? 0}
           onFlagChange={setFlag}
           compact
+          forceFrameGroups={false}
         />
       </div>
     </Modal>

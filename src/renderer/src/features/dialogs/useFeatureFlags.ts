@@ -12,18 +12,27 @@ export interface FeatureFlags {
   frameGroups: boolean
 }
 
+export interface FeatureForceOptions {
+  forceFrameGroups?: boolean
+}
+
 /**
  * Returns whether a feature is forced ON by the version and cannot be toggled off.
  */
-export function isFeatureForced(versionValue: number): {
+export function isFeatureForced(
+  versionValue: number,
+  options: FeatureForceOptions = {}
+): {
   extended: boolean
   improvedAnimations: boolean
   frameGroups: boolean
 } {
+  const forceFrameGroups = options.forceFrameGroups ?? true
+
   return {
     extended: versionValue >= 960,
     improvedAnimations: versionValue >= 1050,
-    frameGroups: versionValue >= 1057
+    frameGroups: forceFrameGroups && versionValue >= 1057
   }
 }
 
