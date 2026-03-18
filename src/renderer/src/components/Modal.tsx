@@ -15,6 +15,7 @@ interface ModalProps {
   children: React.ReactNode
   footer?: React.ReactNode
   closeOnBackdrop?: boolean
+  bodyScrollable?: boolean
 }
 
 export function Modal({
@@ -24,7 +25,8 @@ export function Modal({
   width = 480,
   children,
   footer,
-  closeOnBackdrop = true
+  closeOnBackdrop = true,
+  bodyScrollable = true
 }: ModalProps): React.JSX.Element | null {
   const dialogRef = useRef<HTMLDivElement>(null)
 
@@ -76,7 +78,9 @@ export function Modal({
         </div>
 
         {/* Content */}
-        <div className="flex-1 overflow-y-auto px-6 py-3">{children}</div>
+        <div className={`flex-1 px-6 py-3 ${bodyScrollable ? 'overflow-y-auto' : 'overflow-hidden'}`}>
+          {children}
+        </div>
 
         {/* Footer — Material Design dialog actions */}
         {footer && (

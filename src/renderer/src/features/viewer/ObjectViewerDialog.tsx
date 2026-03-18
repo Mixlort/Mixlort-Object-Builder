@@ -493,8 +493,12 @@ export function ObjectViewerDialog({
       onClose={onClose}
       width={800}
       closeOnBackdrop={false}
+      bodyScrollable={false}
     >
-      <div className="flex flex-col gap-3" style={{ minHeight: 450 }}>
+      <div
+        className="flex min-h-0 flex-col gap-3 overflow-hidden"
+        style={{ height: 'min(560px, calc(90vh - 10rem))' }}
+      >
         {/* Toolbar */}
         <div className="flex items-center gap-2 border-b border-border pb-2">
           {/* Source selector */}
@@ -548,10 +552,10 @@ export function ObjectViewerDialog({
         </div>
 
         {/* Main content */}
-        <div className="flex flex-1 gap-3">
+        <div className="flex min-h-0 flex-1 items-start gap-3 overflow-hidden">
           {/* Left: OBD file list (only in OBD mode) */}
           {sourceMode === 'obd' && (
-            <div className="flex w-48 flex-col rounded border border-border">
+            <div className="flex h-full min-h-0 w-48 shrink-0 flex-col rounded border border-border">
               <div className="border-b border-border px-2 py-1 text-xs font-semibold text-text-secondary">
                 Files ({obdFiles.length})
               </div>
@@ -587,7 +591,7 @@ export function ObjectViewerDialog({
           )}
 
           {/* Center: Preview area */}
-          <div className="flex flex-1 flex-col items-center justify-center rounded border border-border p-4">
+          <div className="flex h-full min-h-0 flex-1 flex-col items-center justify-center rounded border border-border p-4">
             {obdLoading ? (
               <div className="flex items-center gap-2 text-xs text-text-muted">
                 <div className="h-4 w-4 animate-spin rounded-full border-2 border-text-muted border-t-accent" />
@@ -626,7 +630,7 @@ export function ObjectViewerDialog({
           </div>
 
           {/* Right: Controls panel */}
-          <div className="flex w-48 flex-col gap-3">
+          <div className="flex w-48 shrink-0 self-start flex-col gap-3">
             {/* Direction pad */}
             <div className="rounded border border-border p-2">
               <div className="mb-1 text-xs font-semibold text-text-secondary">Direction</div>
