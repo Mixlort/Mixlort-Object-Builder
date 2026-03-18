@@ -100,6 +100,7 @@ import {
   exportThingPlanToFiles,
   type ThingExportEntry
 } from './services/thing-export'
+import { buildRecoveryOpenResult } from './utils'
 import { materializeImportedThingData } from './services/thing-import/thing-import-service'
 import {
   loadServerItems,
@@ -568,8 +569,8 @@ export function App(): React.JSX.Element {
     [addLog]
   )
 
-  const handleOpenConfirm = useCallback(
-    async (result: OpenAssetsResult) => {
+  const runOpenProject = useCallback(
+    async (result: OpenAssetsResult): Promise<boolean> => {
       addLog('info', `Opening project: v${result.version.valueStr} from ${result.datFile}`)
 
       clearThumbnailCache()
@@ -758,11 +759,13 @@ export function App(): React.JSX.Element {
         })
 
         addLog('info', `Project loaded: ${fileName} v${result.version.valueStr}`)
+        return true
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err)
         addLog('error', `Failed to load project: ${message}`)
         setErrorMessages([message])
         setActiveDialog('error')
+        return false
       } finally {
         useAppStore.getState().setLocked(false)
         setIsLoading(false)
@@ -770,6 +773,13 @@ export function App(): React.JSX.Element {
       }
     },
     [addLog]
+  )
+
+  const handleOpenConfirm = useCallback(
+    async (result: OpenAssetsResult) => {
+      await runOpenProject(result)
+    },
+    [runOpenProject]
   )
 
   const runCompile = useCallback(
@@ -1370,17 +1380,41 @@ export function App(): React.JSX.Element {
     const info = recoveryInfo
     setRecoveryInfo(null)
     setActiveDialog(null)
-    // Clear the recovery file since we're handling it
-    window.api?.recovery?.clear()
 
-    if (info) {
-      // Open the project automatically by triggering the open dialog flow
-      // We have the file paths, so open the Open dialog pre-seeded
-      // For simplicity, just open the Open Assets dialog (user can adjust settings)
-      addLog('info', `Recovering previous session: ${info.datFilePath}`)
-      setActiveDialog('open')
+    if (!info || !window.api?.file?.readBinary) {
+      return
     }
-  }, [recoveryInfo, addLog])
+
+    void (async () => {
+      try {
+        addLog('info', `Recovering previous session: ${info.datFilePath}`)
+
+        const [datBuffer, sprBuffer] = await Promise.all([
+          window.api.file.readBinary(info.datFilePath),
+          window.api.file.readBinary(info.sprFilePath)
+        ])
+
+        const result = buildRecoveryOpenResult({
+          datFilePath: info.datFilePath,
+          sprFilePath: info.sprFilePath,
+          versionValue: info.versionValue,
+          serverItemsPath: info.serverItemsPath,
+          datBuffer,
+          sprBuffer
+        })
+
+        const ok = await runOpenProject(result)
+        if (ok) {
+          window.api?.recovery?.clear()
+        }
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err)
+        addLog('error', `Failed to recover previous session: ${message}`)
+        setErrorMessages([message])
+        setActiveDialog('error')
+      }
+    })()
+  }, [recoveryInfo, addLog, runOpenProject])
 
   const handleRecoveryDismiss = useCallback(() => {
     setRecoveryInfo(null)
