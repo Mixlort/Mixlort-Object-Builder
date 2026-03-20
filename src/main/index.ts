@@ -85,6 +85,8 @@ async function createWindow(splash: BrowserWindow | null): Promise<void> {
     mainWindow.maximize()
   }
 
+  let closeConfirmedByMain = false
+
   // Intercept close to ask renderer about unsaved changes.
   // The renderer will either call app:closeConfirmed (which destroys the window)
   // or do nothing (which keeps the window open).
@@ -100,9 +102,27 @@ async function createWindow(splash: BrowserWindow | null): Promise<void> {
       maximized: isMaximized
     })
 
+    if (closeConfirmedByMain) {
+      return
+    }
+
+    const webContents = mainWindow.webContents
+    if (mainWindow.isDestroyed() || webContents.isDestroyed() || webContents.isCrashed()) {
+      return
+    }
+
     // Prevent close and ask renderer to confirm
     event.preventDefault()
-    mainWindow.webContents.send(APP_CONFIRM_CLOSE)
+    try {
+      webContents.send(APP_CONFIRM_CLOSE)
+    } catch (error) {
+      closeConfirmedByMain = true
+      const message = error instanceof Error ? error.message : String(error)
+      writeError(`Failed to send close confirmation to renderer: ${message}`)
+      if (!mainWindow.isDestroyed()) {
+        mainWindow.destroy()
+      }
+    }
   })
 
   mainWindow.on('ready-to-show', () => {
