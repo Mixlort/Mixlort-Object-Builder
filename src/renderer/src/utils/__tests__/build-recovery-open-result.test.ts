@@ -22,6 +22,14 @@ describe('buildRecoveryOpenResult', () => {
       sprFilePath: '/tmp/Tibia.spr',
       versionValue: 1098,
       serverItemsPath: '/tmp/server',
+      features: {
+        extended: true,
+        transparency: true,
+        improvedAnimations: true,
+        frameGroups: true,
+        metadataController: 'default',
+        attributeServer: 'tfs1.4'
+      },
       datBuffer: makeDatHeader(0x42a3),
       sprBuffer: makeSprHeader(0x57bbd603)
     })
@@ -35,6 +43,7 @@ describe('buildRecoveryOpenResult', () => {
     expect(result.improvedAnimations).toBe(true)
     expect(result.frameGroups).toBe(true)
     expect(result.serverItemsDirectory).toBe('/tmp/server')
+    expect(result.attributeServer).toBe('tfs1.4')
   })
 
   it('falls back to version value when signatures are unknown', () => {
@@ -43,11 +52,38 @@ describe('buildRecoveryOpenResult', () => {
       sprFilePath: '/tmp/Tibia.spr',
       versionValue: 1098,
       serverItemsPath: null,
+      features: {
+        extended: true,
+        transparency: true,
+        improvedAnimations: true,
+        frameGroups: false,
+        metadataController: 'default',
+        attributeServer: null
+      },
       datBuffer: makeDatHeader(0xdeadbeef),
       sprBuffer: makeSprHeader(0x12345678)
     })
 
     expect(result.version.value).toBe(1098)
     expect(result.serverItemsDirectory).toBeNull()
+    expect(result.transparency).toBe(true)
+    expect(result.frameGroups).toBe(false)
+  })
+
+  it('falls back to version defaults when recovery features are unavailable', () => {
+    const result = buildRecoveryOpenResult({
+      datFilePath: '/tmp/Tibia.dat',
+      sprFilePath: '/tmp/Tibia.spr',
+      versionValue: 1098,
+      serverItemsPath: null,
+      features: null,
+      datBuffer: makeDatHeader(0x42a3),
+      sprBuffer: makeSprHeader(0x57bbd603)
+    })
+
+    expect(result.extended).toBe(true)
+    expect(result.transparency).toBe(true)
+    expect(result.improvedAnimations).toBe(true)
+    expect(result.frameGroups).toBe(true)
   })
 })

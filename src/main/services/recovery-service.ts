@@ -13,6 +13,7 @@
 import { app } from 'electron'
 import { join } from 'path'
 import { readFileSync, writeFileSync, unlinkSync, existsSync, copyFileSync } from 'fs'
+import type { ProjectFeatures } from '../../shared/project-state'
 
 // ---------------------------------------------------------------------------
 // Types
@@ -23,6 +24,7 @@ export interface RecoveryData {
   sprFilePath: string
   versionValue: number
   serverItemsPath: string | null
+  features: ProjectFeatures
   timestamp: number
 }
 

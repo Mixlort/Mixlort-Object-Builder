@@ -226,6 +226,14 @@ export interface RecoveryData {
   sprFilePath: string
   versionValue: number
   serverItemsPath: string | null
+  features?: {
+    extended: boolean
+    transparency: boolean
+    improvedAnimations: boolean
+    frameGroups: boolean
+    metadataController: string
+    attributeServer: string | null
+  }
   timestamp: number
 }
 

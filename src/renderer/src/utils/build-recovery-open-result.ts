@@ -2,13 +2,14 @@ import { DEFAULT_ATTRIBUTE_SERVER } from '../data/attribute-servers'
 import { SPRITE_DIMENSIONS } from '../data/sprite-dimensions'
 import { VERSIONS, findVersionBySignatures } from '../data/versions'
 import type { OpenAssetsResult } from '../features/dialogs'
-import { applyVersionDefaults } from '../features/dialogs/useFeatureFlags'
+import type { ClientFeatures } from '../types'
 
 export interface BuildRecoveryOpenResultParams {
   datFilePath: string
   sprFilePath: string
   versionValue: number
   serverItemsPath: string | null
+  features: ClientFeatures | null
   datBuffer: ArrayBuffer
   sprBuffer: ArrayBuffer
 }
@@ -18,6 +19,7 @@ export function buildRecoveryOpenResult({
   sprFilePath,
   versionValue,
   serverItemsPath,
+  features,
   datBuffer,
   sprBuffer
 }: BuildRecoveryOpenResultParams): OpenAssetsResult {
@@ -36,26 +38,27 @@ export function buildRecoveryOpenResult({
     )
   }
 
-  const features = applyVersionDefaults(
+  const resolvedFeatures =
+    features ??
     {
-      extended: false,
-      transparency: false,
-      improvedAnimations: false,
-      frameGroups: false
-    },
-    version.value
-  )
+      extended: version.value >= 960,
+      transparency: true,
+      improvedAnimations: version.value >= 1050,
+      frameGroups: version.value >= 1057,
+      metadataController: 'default',
+      attributeServer: DEFAULT_ATTRIBUTE_SERVER
+    }
 
   return {
     datFile: datFilePath,
     sprFile: sprFilePath,
     version,
     spriteDimension: SPRITE_DIMENSIONS[0],
-    extended: features.extended,
-    transparency: features.transparency,
-    improvedAnimations: features.improvedAnimations,
-    frameGroups: features.frameGroups,
+    extended: resolvedFeatures.extended,
+    transparency: resolvedFeatures.transparency,
+    improvedAnimations: resolvedFeatures.improvedAnimations,
+    frameGroups: resolvedFeatures.frameGroups,
     serverItemsDirectory: serverItemsPath,
-    attributeServer: DEFAULT_ATTRIBUTE_SERVER
+    attributeServer: resolvedFeatures.attributeServer ?? DEFAULT_ATTRIBUTE_SERVER
   }
 }

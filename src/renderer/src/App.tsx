@@ -150,6 +150,7 @@ interface RecoveryInfo {
   sprFilePath: string
   versionValue: number
   serverItemsPath: string | null
+  features: ClientFeatures | null
 }
 
 interface CompileRunParams {
@@ -341,7 +342,17 @@ export function App(): React.JSX.Element {
           datFilePath: data.datFilePath,
           sprFilePath: data.sprFilePath,
           versionValue: data.versionValue,
-          serverItemsPath: data.serverItemsPath
+          serverItemsPath: data.serverItemsPath,
+          features: data.features
+            ? {
+                extended: data.features.extended,
+                transparency: data.features.transparency,
+                improvedAnimations: data.features.improvedAnimations,
+                frameGroups: data.features.frameGroups,
+                metadataController: data.features.metadataController,
+                attributeServer: data.features.attributeServer
+              }
+            : null
         })
         setActiveDialog('recovery')
       }
@@ -1427,11 +1438,26 @@ export function App(): React.JSX.Element {
           window.api.file.readBinary(info.sprFilePath)
         ])
 
+        let recoveryFeatures = info.features
+        if (!recoveryFeatures && window.api?.file?.readText) {
+          try {
+            const datDir = info.datFilePath.replace(/[\\/][^\\/]+$/u, '')
+            const datBaseName = getBaseName(info.datFilePath)
+            const otfiPath = `${datDir}/${datBaseName}.otfi`
+            const otfiContent = await window.api.file.readText(otfiPath)
+            const otfiData = parseOtfi(otfiContent)
+            recoveryFeatures = otfiData?.features ?? null
+          } catch {
+            // Ignore missing/invalid OTFI and fall back to version defaults.
+          }
+        }
+
         const result = buildRecoveryOpenResult({
           datFilePath: info.datFilePath,
           sprFilePath: info.sprFilePath,
           versionValue: info.versionValue,
           serverItemsPath: info.serverItemsPath,
+          features: recoveryFeatures,
           datBuffer,
           sprBuffer
         })

@@ -179,6 +179,7 @@ export async function loadProject(params: LoadProjectParams): Promise<LoadProjec
     sprFilePath: params.sprFilePath,
     versionValue: params.versionValue,
     serverItemsPath: params.serverItemsPath ?? null,
+    features,
     timestamp: Date.now()
   })
 
@@ -259,6 +260,7 @@ export async function compileProject(params: CompileProjectParams): Promise<void
     sprFilePath: params.sprFilePath,
     versionValue: params.versionValue,
     serverItemsPath: params.serverItemsPath ?? null,
+    features: { ...params.features },
     timestamp: Date.now()
   })
 }
