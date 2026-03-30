@@ -28,6 +28,9 @@ import type { ThingType, ThingData } from '../../../types'
 // Helpers
 // ---------------------------------------------------------------------------
 
+const mockShowOpenDialog = vi.fn()
+const mockReadBinary = vi.fn()
+
 function makeThing(
   id: number,
   category: ThingCategory,
@@ -78,6 +81,21 @@ function loadEditorWithThing(
 // Suppress jsdom canvas warnings (getContext not implemented without canvas npm package)
 beforeEach(() => {
   vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue(null)
+  mockShowOpenDialog.mockReset().mockResolvedValue({ canceled: true, filePaths: [] })
+  mockReadBinary.mockReset()
+  Object.defineProperty(window, 'api', {
+    value: {
+      file: {
+        showOpenDialog: mockShowOpenDialog,
+        readBinary: mockReadBinary
+      },
+      menu: {
+        updateState: vi.fn().mockResolvedValue(undefined)
+      }
+    },
+    writable: true,
+    configurable: true
+  })
   resetAppStore()
   resetEditorStore()
   resetSpriteStore()
@@ -215,6 +233,18 @@ describe('SpritePanel', () => {
       expect(cell1.className).toContain('bg-accent')
       expect(cell0.className).not.toContain('bg-accent')
     })
+
+    it('supports multi-selection with meta click', () => {
+      render(<SpritePanel />)
+      const cell0 = screen.getByTestId('sprite-cell-0')
+      const cell2 = screen.getByTestId('sprite-cell-2')
+
+      fireEvent.click(cell0)
+      fireEvent.click(cell2, { metaKey: true })
+
+      expect(cell0.className).toContain('bg-accent')
+      expect(cell2.className).toContain('bg-accent')
+    })
   })
 
   // -----------------------------------------------------------------------
@@ -324,6 +354,128 @@ describe('SpritePanel', () => {
       // Deselect
       fireEvent.click(screen.getByTestId('sprite-cell-0'))
       expect(screen.getByTestId('sprite-export-btn')).toBeDisabled()
+    })
+
+    it('replace opens file dialog with multi-selection enabled', async () => {
+      render(<SpritePanel />)
+
+      fireEvent.click(screen.getByTestId('sprite-cell-0'))
+      fireEvent.click(screen.getByTestId('sprite-cell-1'), { metaKey: true })
+
+      await act(async () => {
+        fireEvent.click(screen.getByTestId('sprite-replace-btn'))
+      })
+
+      expect(mockShowOpenDialog).toHaveBeenCalledWith(
+        expect.objectContaining({ multiSelections: true })
+      )
+    })
+
+    it('replace aborts when selected sprite count does not match file count', async () => {
+      mockShowOpenDialog.mockResolvedValue({
+        canceled: false,
+        filePaths: ['/tmp/1.png']
+      })
+
+      render(<SpritePanel />)
+
+      fireEvent.click(screen.getByTestId('sprite-cell-0'))
+      fireEvent.click(screen.getByTestId('sprite-cell-1'), { metaKey: true })
+
+      await act(async () => {
+        fireEvent.click(screen.getByTestId('sprite-replace-btn'))
+      })
+
+      expect(mockReadBinary).not.toHaveBeenCalled()
+      expect(useAppStore.getState().logs.at(-1)?.message).toContain(
+        'Sprite replace expects 2 file(s), received 1.'
+      )
+    })
+
+    it('replace processes selected files in natural filename order', async () => {
+      const originalImage = global.Image
+      const mockCanvasContext = {
+        fillRect: vi.fn(),
+        clearRect: vi.fn(),
+        drawImage: vi.fn(),
+        putImageData: vi.fn(),
+        getImageData: vi.fn(() => ({
+          data: new Uint8ClampedArray(32 * 32 * 4)
+        })),
+        imageSmoothingEnabled: false
+      } as unknown as CanvasRenderingContext2D
+
+      vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue(mockCanvasContext)
+      if (!('ImageData' in globalThis)) {
+        Object.defineProperty(globalThis, 'ImageData', {
+          value: class MockImageData {
+            data: Uint8ClampedArray
+            width: number
+            height: number
+
+            constructor(data: Uint8ClampedArray, width: number, height: number) {
+              this.data = data
+              this.width = width
+              this.height = height
+            }
+          },
+          writable: true,
+          configurable: true
+        })
+      }
+      if (!('createObjectURL' in URL)) {
+        Object.defineProperty(URL, 'createObjectURL', {
+          value: vi.fn(),
+          writable: true,
+          configurable: true
+        })
+      }
+      if (!('revokeObjectURL' in URL)) {
+        Object.defineProperty(URL, 'revokeObjectURL', {
+          value: vi.fn(),
+          writable: true,
+          configurable: true
+        })
+      }
+      vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:mock')
+      vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => undefined)
+
+      class MockImage {
+        onload: null | (() => void) = null
+        onerror: null | (() => void) = null
+
+        set src(_value: string) {
+          this.onload?.()
+        }
+      }
+
+      global.Image = MockImage as unknown as typeof Image
+
+      mockShowOpenDialog.mockResolvedValue({
+        canceled: false,
+        filePaths: ['/tmp/10.png', '/tmp/2.png', '/tmp/1.png']
+      })
+      mockReadBinary.mockResolvedValue(new ArrayBuffer(4))
+
+      try {
+        render(<SpritePanel />)
+
+        fireEvent.click(screen.getByTestId('sprite-cell-0'))
+        fireEvent.click(screen.getByTestId('sprite-cell-1'), { metaKey: true })
+        fireEvent.click(screen.getByTestId('sprite-cell-2'), { metaKey: true })
+
+        await act(async () => {
+          fireEvent.click(screen.getByTestId('sprite-replace-btn'))
+        })
+
+        expect(mockReadBinary.mock.calls.map(([filePath]) => filePath)).toEqual([
+          '/tmp/1.png',
+          '/tmp/2.png',
+          '/tmp/10.png'
+        ])
+      } finally {
+        global.Image = originalImage
+      }
     })
   })
 

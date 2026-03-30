@@ -216,4 +216,15 @@ describe('CreateAssetsDialog', () => {
     expect(result.spriteDimension).toEqual(SPRITE_DIMENSIONS[0])
     expect(result.spriteDimension.value).toBe('32x32')
   })
+
+  it('uses default transparency when provided', () => {
+    const onConfirm = vi.fn()
+    renderDialog({ onConfirm, defaultTransparency: true })
+
+    selectVersion(0)
+    fireEvent.click(screen.getByText('Confirm'))
+
+    const result = onConfirm.mock.calls[0][0]
+    expect(result.transparency).toBe(true)
+  })
 })

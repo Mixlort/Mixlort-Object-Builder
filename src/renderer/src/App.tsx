@@ -1574,12 +1574,14 @@ export function App(): React.JSX.Element {
         open={activeDialog === 'create'}
         onClose={closeDialog}
         onConfirm={handleCreateConfirm}
+        defaultTransparency={runtimeSettings.transparency}
       />
 
       <OpenAssetsDialog
         open={activeDialog === 'open'}
         onClose={closeDialog}
         onConfirm={handleOpenConfirm}
+        defaultTransparency={runtimeSettings.transparency}
       />
 
       <CompileAssetsDialog

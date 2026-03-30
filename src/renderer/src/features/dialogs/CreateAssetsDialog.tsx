@@ -29,17 +29,19 @@ interface CreateAssetsDialogProps {
   open: boolean
   onClose: () => void
   onConfirm: (result: CreateAssetsResult) => void
+  defaultTransparency?: boolean
 }
 
 export function CreateAssetsDialog({
   open,
   onClose,
-  onConfirm
+  onConfirm,
+  defaultTransparency = false
 }: CreateAssetsDialogProps): React.JSX.Element {
   const { t } = useTranslation()
   const [selectedVersionIndex, setSelectedVersionIndex] = useState<string>('')
   const [selectedDimensionIndex, setSelectedDimensionIndex] = useState<string>('0')
-  const { flags, setFlag, setFlags } = useFeatureFlags()
+  const { flags, setFlag, setFlags } = useFeatureFlags({ transparency: defaultTransparency })
 
   const versionOptions = useMemo(
     () => [
@@ -56,6 +58,17 @@ export function CreateAssetsDialog({
 
   const selectedVersion =
     selectedVersionIndex !== '' ? VERSIONS[Number(selectedVersionIndex)] : null
+
+  React.useEffect(() => {
+    if (!open) return
+
+    setFlags({
+      extended: false,
+      transparency: defaultTransparency,
+      improvedAnimations: false,
+      frameGroups: false
+    })
+  }, [defaultTransparency, open, setFlags])
 
   const handleVersionChange = useCallback(
     (indexStr: string) => {
@@ -83,8 +96,14 @@ export function CreateAssetsDialog({
   const handleClose = useCallback(() => {
     setSelectedVersionIndex('')
     setSelectedDimensionIndex('0')
+    setFlags({
+      extended: false,
+      transparency: defaultTransparency,
+      improvedAnimations: false,
+      frameGroups: false
+    })
     onClose()
-  }, [onClose])
+  }, [defaultTransparency, onClose, setFlags])
 
   return (
     <Modal

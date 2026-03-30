@@ -31,6 +31,7 @@ import { createSpriteData } from '../../types/sprites'
 import { cloneThingType } from '../../types/things'
 import { PaginationStepper } from '../../components/PaginationStepper'
 import { useTranslation } from 'react-i18next'
+import { compareFileNamesNaturally } from '../../utils'
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -130,7 +131,7 @@ interface SpriteCellProps {
   slot: SpriteSlot
   selected: boolean
   dragOverTarget: boolean
-  onSelect: (index: number) => void
+  onSelect: (index: number, event: React.MouseEvent<HTMLDivElement>) => void
   onHover: (index: number | null) => void
   onDragStart: (index: number) => void
   onDragOver: (e: React.DragEvent, index: number) => void
@@ -179,7 +180,7 @@ function SpriteCell({
       }`}
       style={{ width: CELL_SIZE, height: CELL_SIZE + 14 }}
       draggable
-      onClick={() => onSelect(slot.index)}
+      onClick={(event) => onSelect(slot.index, event)}
       onMouseEnter={() => onHover(slot.index)}
       onMouseLeave={() => onHover(null)}
       onDragStart={handleDragStart}
@@ -240,6 +241,41 @@ function SpritePreview({ spriteId, pixels }: SpritePreviewProps): React.JSX.Elem
   )
 }
 
+async function loadArgbPixelsFromPath(filePath: string): Promise<Uint8Array> {
+  if (!window.api?.file) {
+    throw new Error('File API unavailable')
+  }
+
+  const buffer = await window.api.file.readBinary(filePath)
+  const blob = new Blob([buffer])
+  const objectUrl = URL.createObjectURL(blob)
+
+  try {
+    const image = await new Promise<HTMLImageElement>((resolve, reject) => {
+      const img = new Image()
+      img.onload = () => resolve(img)
+      img.onerror = () => reject(new Error(`Failed to load image: ${filePath}`))
+      img.src = objectUrl
+    })
+
+    const canvas = document.createElement('canvas')
+    canvas.width = SPRITE_DEFAULT_SIZE
+    canvas.height = SPRITE_DEFAULT_SIZE
+    const ctx = canvas.getContext('2d')
+    if (!ctx) {
+      throw new Error('Canvas 2D context unavailable')
+    }
+
+    ctx.clearRect(0, 0, SPRITE_DEFAULT_SIZE, SPRITE_DEFAULT_SIZE)
+    ctx.imageSmoothingEnabled = false
+    ctx.drawImage(image, 0, 0, SPRITE_DEFAULT_SIZE, SPRITE_DEFAULT_SIZE)
+
+    return rgbaToArgb(ctx.getImageData(0, 0, SPRITE_DEFAULT_SIZE, SPRITE_DEFAULT_SIZE).data)
+  } finally {
+    URL.revokeObjectURL(objectUrl)
+  }
+}
+
 // ---------------------------------------------------------------------------
 // SpritePanel
 // ---------------------------------------------------------------------------
@@ -253,6 +289,7 @@ export function SpritePanel({
 }: SpritePanelProps): React.JSX.Element {
   const { t } = useTranslation()
   const [selectedSlot, setSelectedSlot] = useState<number | null>(null)
+  const [selectedSlots, setSelectedSlots] = useState<number[]>([])
   const [hoveredSlot, setHoveredSlot] = useState<number | null>(null)
   const [frameGroupType, setFrameGroupType] = useState<FrameGroupType>(FrameGroupType.DEFAULT)
   const [isDragOver, setIsDragOver] = useState(false)
@@ -332,6 +369,32 @@ export function SpritePanel({
   const spriteStepperValue = needsPagination ? safePage * resolvedPageSize : 0
   const spriteStepperMax = Math.max(0, spriteSlots.length - 1)
 
+  const selectedSpriteTargets = useMemo(() => {
+    const seen = new Set<number>()
+    const targets: Array<{ slotIndex: number; spriteId: number }> = []
+
+    for (const slotIndex of [...selectedSlots].sort((a, b) => a - b)) {
+      const slot = spriteSlots[slotIndex]
+      if (!slot || slot.spriteId <= 0 || seen.has(slot.spriteId)) {
+        continue
+      }
+
+      seen.add(slot.spriteId)
+      targets.push({ slotIndex, spriteId: slot.spriteId })
+    }
+
+    return targets
+  }, [selectedSlots, spriteSlots])
+
+  const hasInvalidReplaceSelection = useMemo(
+    () =>
+      selectedSlots.some((slotIndex) => {
+        const slot = spriteSlots[slotIndex]
+        return slot != null && slot.spriteId <= 0
+      }),
+    [selectedSlots, spriteSlots]
+  )
+
   const handleSpriteStepperChange = useCallback(
     (targetIndex: number) => {
       if (spriteSlots.length === 0) return
@@ -349,9 +412,11 @@ export function SpritePanel({
   // Reset selection when editing thing changes
   useEffect(() => {
     setSelectedSlot(null)
+    setSelectedSlots([])
     setHoveredSlot(null)
     setFrameGroupType(FrameGroupType.DEFAULT)
     setCurrentPage(0)
+    useSpriteStore.getState().clearSpriteSelection()
   }, [editingThingData])
 
   // Reset page when frame group changes
@@ -359,10 +424,48 @@ export function SpritePanel({
     setCurrentPage(0)
   }, [frameGroupType])
 
-  // Handlers
-  const handleSelect = useCallback((index: number) => {
-    setSelectedSlot((prev) => (prev === index ? null : index))
-  }, [])
+  const handleSelectSprite = useCallback(
+    (index: number, event: React.MouseEvent<HTMLDivElement>) => {
+      let nextSelectedSlots: number[] = []
+      let nextPrimarySlot: number | null = index
+
+      if (event.shiftKey && selectedSlot !== null) {
+        const start = Math.min(selectedSlot, index)
+        const end = Math.max(selectedSlot, index)
+        nextSelectedSlots = Array.from({ length: end - start + 1 }, (_, offset) => start + offset)
+      } else if (event.metaKey || event.ctrlKey) {
+        const alreadySelected = selectedSlots.includes(index)
+        if (alreadySelected) {
+          nextSelectedSlots = selectedSlots.filter((slot) => slot !== index)
+          nextPrimarySlot =
+            selectedSlot === index
+              ? (nextSelectedSlots[nextSelectedSlots.length - 1] ?? null)
+              : selectedSlot
+        } else {
+          nextSelectedSlots = [...selectedSlots, index].sort((a, b) => a - b)
+        }
+      } else if (selectedSlots.length === 1 && selectedSlots[0] === index) {
+        nextSelectedSlots = []
+        nextPrimarySlot = null
+      } else {
+        nextSelectedSlots = [index]
+      }
+
+      setSelectedSlots(nextSelectedSlots)
+      setSelectedSlot(nextPrimarySlot)
+
+      const nextSpriteIds = nextSelectedSlots
+        .map((slotIndex) => spriteSlots[slotIndex]?.spriteId ?? 0)
+        .filter((spriteId, slotIndex, array) => spriteId > 0 && array.indexOf(spriteId) === slotIndex)
+
+      if (nextSpriteIds.length > 0) {
+        useSpriteStore.getState().selectSprites(nextSpriteIds)
+      } else {
+        useSpriteStore.getState().clearSpriteSelection()
+      }
+    },
+    [selectedSlot, selectedSlots, spriteSlots]
+  )
 
   const handleHover = useCallback((index: number | null) => {
     setHoveredSlot(index)
@@ -371,6 +474,8 @@ export function SpritePanel({
   const handleFrameGroupChange = useCallback((e: React.ChangeEvent<HTMLSelectElement>) => {
     setFrameGroupType(Number(e.target.value) as FrameGroupType)
     setSelectedSlot(null)
+    setSelectedSlots([])
+    useSpriteStore.getState().clearSpriteSelection()
   }, [])
 
   // Internal sprite drag-and-drop (reorder within grid)
@@ -833,6 +938,85 @@ export function SpritePanel({
     [editingThingData, frameGroup, frameGroupType, spriteIndex, selectedSlot, transparent]
   )
 
+  const handleReplaceSelected = useCallback(async () => {
+    if (!window.api?.file || !editingThingData || selectedSlots.length === 0) return
+
+    const appStore = useAppStore.getState()
+
+    if (hasInvalidReplaceSelection) {
+      appStore.addLog('warning', t('error.spriteCannotBeReplaced'))
+      return
+    }
+
+    if (selectedSpriteTargets.length === 0) return
+
+    const result = await window.api.file.showOpenDialog({
+      title: t('controls.replaceSprite'),
+      filters: [
+        { name: 'Images', extensions: ['png', 'bmp', 'jpg', 'jpeg'] },
+        { name: 'All Files', extensions: ['*'] }
+      ],
+      multiSelections: true
+    })
+
+    if (result.canceled || result.filePaths.length === 0) return
+
+    const sortedFilePaths = [...result.filePaths].sort(compareFileNamesNaturally)
+    if (sortedFilePaths.length !== selectedSpriteTargets.length) {
+      appStore.addLog(
+        'warning',
+        `Sprite replace expects ${selectedSpriteTargets.length} file(s), received ${sortedFilePaths.length}.`
+      )
+      return
+    }
+
+    try {
+      const replacementEntries: Array<[number, Uint8Array]> = []
+      const updatedInlineSprites = [...(editingThingData.sprites.get(frameGroupType) ?? [])]
+
+      for (let index = 0; index < selectedSpriteTargets.length; index++) {
+        const target = selectedSpriteTargets[index]
+        const pixels = await loadArgbPixelsFromPath(sortedFilePaths[index])
+        replacementEntries.push([target.spriteId, compressPixels(pixels, transparent)])
+
+        while (updatedInlineSprites.length <= target.slotIndex) {
+          updatedInlineSprites.push(createSpriteData())
+        }
+        updatedInlineSprites[target.slotIndex] = { id: target.spriteId, pixels }
+      }
+
+      useSpriteStore.getState().replaceSprites(replacementEntries)
+
+      const newSpritesMap = new Map(editingThingData.sprites)
+      newSpritesMap.set(frameGroupType, updatedInlineSprites)
+
+      const editorStore = useEditorStore.getState()
+      editorStore.setEditingThingData({
+        ...editingThingData,
+        sprites: newSpritesMap
+      })
+      editorStore.setEditingChanged(true)
+
+      appStore.setProjectChanged(true)
+      appStore.addLog('info', `Replaced ${replacementEntries.length} sprite(s).`)
+
+      if (window.api?.menu) {
+        await window.api.menu.updateState({ clientChanged: true })
+      }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err)
+      appStore.addLog('error', `Failed to replace sprites: ${message}`)
+    }
+  }, [
+    editingThingData,
+    frameGroupType,
+    hasInvalidReplaceSelection,
+    selectedSlots,
+    selectedSpriteTargets,
+    t,
+    transparent
+  ])
+
   // -------------------------------------------------------------------------
   // Render: empty state
   // -------------------------------------------------------------------------
@@ -911,9 +1095,9 @@ export function SpritePanel({
               <SpriteCell
                 key={slot.index}
                 slot={slot}
-                selected={selectedSlot === slot.index}
+                selected={selectedSlots.includes(slot.index)}
                 dragOverTarget={dragOverIndex === slot.index}
-                onSelect={handleSelect}
+                onSelect={handleSelectSprite}
                 onHover={handleHover}
                 onDragStart={handleSpriteDragStart}
                 onDragOver={handleSpriteDragOver}
@@ -951,9 +1135,12 @@ export function SpritePanel({
         </button>
         <button
           className="flex-1 rounded px-1 py-0.5 text-[10px] text-text-secondary hover:bg-bg-tertiary hover:text-text-primary disabled:opacity-40"
-          disabled={selectedSlot === null}
+          disabled={selectedSpriteTargets.length === 0}
           title="Replace selected sprite"
           data-testid="sprite-replace-btn"
+          onClick={() => {
+            void handleReplaceSelected()
+          }}
         >
           {t('labels.replace')}
         </button>

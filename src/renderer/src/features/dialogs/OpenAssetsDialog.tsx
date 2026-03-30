@@ -61,6 +61,7 @@ interface OpenAssetsDialogProps {
   onConfirm: (result: OpenAssetsResult) => void
   lastDirectory?: string | null
   lastServerItemsDirectory?: string | null
+  defaultTransparency?: boolean
 }
 
 export function OpenAssetsDialog({
@@ -68,7 +69,8 @@ export function OpenAssetsDialog({
   onClose,
   onConfirm,
   lastDirectory,
-  lastServerItemsDirectory
+  lastServerItemsDirectory,
+  defaultTransparency = false
 }: OpenAssetsDialogProps): React.JSX.Element {
   const { t } = useTranslation()
   const [clientDirectory, setClientDirectory] = useState('')
@@ -85,7 +87,7 @@ export function OpenAssetsDialog({
   )
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
-  const { flags, setFlag, setFlags } = useFeatureFlags()
+  const { flags, setFlag, setFlags } = useFeatureFlags({ transparency: defaultTransparency })
 
   const dimensionOptions = useMemo(
     () => SPRITE_DIMENSIONS.map((d, i) => ({ value: String(i), label: d.value })),
@@ -133,6 +135,17 @@ export function OpenAssetsDialog({
       cancelled = true
     }
   }, [open, lastDirectory, lastServerItemsDirectory])
+
+  useEffect(() => {
+    if (!open) return
+
+    setFlags({
+      extended: false,
+      transparency: defaultTransparency,
+      improvedAnimations: false,
+      frameGroups: false
+    })
+  }, [defaultTransparency, open, setFlags])
 
   const loadClientDirectory = useCallback(
     async (dir: string) => {
@@ -193,7 +206,7 @@ export function OpenAssetsDialog({
             applyVersionDefaults(
               {
                 extended: false,
-                transparency: false,
+                transparency: defaultTransparency,
                 improvedAnimations: false,
                 frameGroups: false
               },
@@ -212,7 +225,7 @@ export function OpenAssetsDialog({
         setLoading(false)
       }
     },
-    [setFlags]
+    [defaultTransparency, setFlags]
   )
 
   const handleBrowseClient = useCallback(async () => {
@@ -284,8 +297,14 @@ export function OpenAssetsDialog({
     setServerInfo(null)
     setRecentClientDirectory('')
     setError(null)
+    setFlags({
+      extended: false,
+      transparency: defaultTransparency,
+      improvedAnimations: false,
+      frameGroups: false
+    })
     onClose()
-  }, [onClose])
+  }, [defaultTransparency, onClose, setFlags])
 
   return (
     <Modal
