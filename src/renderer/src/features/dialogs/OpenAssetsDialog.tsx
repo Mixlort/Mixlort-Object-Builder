@@ -70,7 +70,7 @@ export function OpenAssetsDialog({
   onConfirm,
   lastDirectory,
   lastServerItemsDirectory,
-  defaultTransparency = false
+  defaultTransparency = true
 }: OpenAssetsDialogProps): React.JSX.Element {
   const { t } = useTranslation()
   const [clientDirectory, setClientDirectory] = useState('')

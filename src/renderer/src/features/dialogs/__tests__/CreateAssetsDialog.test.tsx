@@ -145,7 +145,7 @@ describe('CreateAssetsDialog', () => {
     expect(onClose).toHaveBeenCalledTimes(1)
   })
 
-  it('feature flags default to false for old versions', () => {
+  it('transparency defaults to enabled for old versions while other flags stay off', () => {
     const onConfirm = vi.fn()
     renderDialog({ onConfirm })
 
@@ -155,7 +155,7 @@ describe('CreateAssetsDialog', () => {
 
     const result = onConfirm.mock.calls[0][0]
     expect(result.extended).toBe(false)
-    expect(result.transparency).toBe(false)
+    expect(result.transparency).toBe(true)
     expect(result.improvedAnimations).toBe(false)
     expect(result.frameGroups).toBe(false)
   })

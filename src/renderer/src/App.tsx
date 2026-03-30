@@ -1235,7 +1235,7 @@ export function App(): React.JSX.Element {
 
   const handleImportConfirm = useCallback(
     async (result: ImportThingResult) => {
-      addLog('info', `Importing: ${result.filePath} (${result.action})`)
+      addLog('info', `Importing: ${result.entries.length} object(s) (${result.action})`)
 
       const appState = useAppStore.getState()
       const importClientInfo = appState.clientInfo
@@ -1249,56 +1249,89 @@ export function App(): React.JSX.Element {
       appState.setLocked(true)
 
       try {
-        const imported = materializeImportedThingData({
-          thingData: result.thingData,
-          transparent: importClientInfo.features.transparency,
-          addSprite: (compressed) => useSpriteStore.getState().addSprite(compressed)
-        })
-
-        const category = imported.thing.category
-        let targetId: number
-
         if (result.action === 'replace') {
-          if (selectedThingId === null) {
+          const targetIds =
+            selectedThingIds.length > 0
+              ? [...selectedThingIds].sort((a, b) => a - b)
+              : selectedThingId !== null
+                ? [selectedThingId]
+                : []
+
+          if (targetIds.length === 0) {
             throw new Error('No object selected for replace')
           }
 
-          if (category !== currentCategory) {
+          if (targetIds.length !== result.entries.length) {
             throw new Error(
-              `Cannot replace ${currentCategory} with imported ${category}. Categories must match.`
+              `Selected ${targetIds.length} object(s), but received ${result.entries.length} file(s).`
             )
           }
 
-          targetId = selectedThingId
-          imported.thing.id = targetId
-          appState.updateThing(category, targetId, imported.thing)
+          const mismatchedCategory = result.entries.find(
+            (entry) => entry.thingData.thing.category !== currentCategory
+          )
+          if (mismatchedCategory) {
+            throw new Error(
+              `Cannot replace ${currentCategory} with imported ${mismatchedCategory.thingData.thing.category}. Categories must match.`
+            )
+          }
+
+          for (let index = 0; index < result.entries.length; index++) {
+            const entry = result.entries[index]
+            const imported = materializeImportedThingData({
+              thingData: entry.thingData,
+              transparent: importClientInfo.features.transparency,
+              addSprite: (compressed) => useSpriteStore.getState().addSprite(compressed)
+            })
+
+            const targetId = targetIds[index]
+            imported.thing.id = targetId
+            appState.updateThing(currentCategory, targetId, imported.thing)
+          }
 
           const editorThing = useEditorStore.getState().editingThingData?.thing
-          if (editorThing && editorThing.category === category && editorThing.id === targetId) {
-            loadThingIntoEditor(targetId, category)
+          if (editorThing && targetIds.includes(editorThing.id)) {
+            loadThingIntoEditor(editorThing.id, currentCategory)
           }
-        } else {
-          const categoryThings = appState.getThingsByCategory(category)
-          const minId =
-            category === ThingCategory.ITEM
-              ? importClientInfo.minItemId
-              : category === ThingCategory.OUTFIT
-                ? importClientInfo.minOutfitId
-                : category === ThingCategory.EFFECT
-                  ? importClientInfo.minEffectId
-                  : importClientInfo.minMissileId
 
-          targetId = getMaxThingId(categoryThings, minId - 1) + 1
-          imported.thing.id = targetId
-          appState.addThing(category, imported.thing)
-          appState.selectThing(targetId)
+          addLog('info', `Import complete: replaced ${targetIds.length} ${currentCategory}(s)`)
+        } else {
+          let lastAddedId: number | null = null
+
+          for (const entry of result.entries) {
+            const imported = materializeImportedThingData({
+              thingData: entry.thingData,
+              transparent: importClientInfo.features.transparency,
+              addSprite: (compressed) => useSpriteStore.getState().addSprite(compressed)
+            })
+
+            const category = imported.thing.category
+            const categoryThings = appState.getThingsByCategory(category)
+            const minId =
+              category === ThingCategory.ITEM
+                ? importClientInfo.minItemId
+                : category === ThingCategory.OUTFIT
+                  ? importClientInfo.minOutfitId
+                  : category === ThingCategory.EFFECT
+                    ? importClientInfo.minEffectId
+                    : importClientInfo.minMissileId
+
+            const targetId = getMaxThingId(categoryThings, minId - 1) + 1
+            imported.thing.id = targetId
+            appState.addThing(category, imported.thing)
+            lastAddedId = targetId
+          }
+
+          if (lastAddedId !== null) {
+            appState.selectThing(lastAddedId)
+          }
+
+          addLog('info', `Import complete: added ${result.entries.length} object(s)`)
         }
 
         appState.setSpriteCount(useSpriteStore.getState().getSpriteCount())
         appState.setProjectChanged(true)
         await window.api.menu.updateState({ clientChanged: true })
-
-        addLog('info', `Import complete: ${getFileName(result.filePath)} -> ${category} #${targetId}`)
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err)
         addLog('error', `Failed to import object: ${message}`)
@@ -1310,7 +1343,7 @@ export function App(): React.JSX.Element {
         setLoadingLabel('')
       }
     },
-    [addLog, currentCategory, loadThingIntoEditor, selectedThingId]
+    [addLog, currentCategory, loadThingIntoEditor, selectedThingId, selectedThingIds]
   )
 
   const handleBulkEditConfirm = useCallback(
@@ -1574,14 +1607,14 @@ export function App(): React.JSX.Element {
         open={activeDialog === 'create'}
         onClose={closeDialog}
         onConfirm={handleCreateConfirm}
-        defaultTransparency={runtimeSettings.transparency}
+        defaultTransparency={true}
       />
 
       <OpenAssetsDialog
         open={activeDialog === 'open'}
         onClose={closeDialog}
         onConfirm={handleOpenConfirm}
-        defaultTransparency={runtimeSettings.transparency}
+        defaultTransparency={true}
       />
 
       <CompileAssetsDialog
@@ -1657,7 +1690,10 @@ export function App(): React.JSX.Element {
         open={activeDialog === 'import'}
         onClose={closeDialog}
         onConfirm={handleImportConfirm}
-        canReplace={selectedThingId !== null}
+        canReplace={selectedThingIds.length > 0 || selectedThingId !== null}
+        replaceCount={
+          selectedThingIds.length > 0 ? selectedThingIds.length : selectedThingId !== null ? 1 : 0
+        }
       />
 
       <BulkEditDialog

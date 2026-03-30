@@ -19,6 +19,7 @@ import {
 import type { ThingData } from '../../types/things'
 import { ThingCategory } from '../../types/things'
 import { VERSIONS } from '../../data'
+import { compareFileNamesNaturally } from '../../utils'
 
 // ---------------------------------------------------------------------------
 // Types
@@ -26,9 +27,13 @@ import { VERSIONS } from '../../data'
 
 export type ImportAction = 'add' | 'replace'
 
-export interface ImportThingResult {
+export interface ImportThingEntry {
   filePath: string
   thingData: ThingData
+}
+
+export interface ImportThingResult {
+  entries: ImportThingEntry[]
   action: ImportAction
 }
 
@@ -37,6 +42,7 @@ export interface ImportThingDialogProps {
   onClose: () => void
   onConfirm: (result: ImportThingResult) => void
   canReplace?: boolean
+  replaceCount?: number
 }
 
 // ---------------------------------------------------------------------------
@@ -71,20 +77,24 @@ export function ImportThingDialog({
   open,
   onClose,
   onConfirm,
-  canReplace = false
+  canReplace = false,
+  replaceCount = 0
 }: ImportThingDialogProps): React.JSX.Element {
   const { t } = useTranslation()
-  const [filePath, setFilePath] = useState('')
-  const [thingData, setThingData] = useState<ThingData | null>(null)
+  const [fileLabel, setFileLabel] = useState('')
+  const [entries, setEntries] = useState<ImportThingEntry[]>([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [action, setAction] = useState<ImportAction>('add')
 
+  const firstEntry = entries[0] ?? null
+  const countMismatch = action === 'replace' && replaceCount > 0 && entries.length !== replaceCount
+
   // Reset state on open
   useEffect(() => {
     if (open) {
-      setFilePath('')
-      setThingData(null)
+      setFileLabel('')
+      setEntries([])
       setLoading(false)
       setError(null)
       setAction('add')
@@ -95,39 +105,43 @@ export function ImportThingDialog({
     if (!window.api?.file) return
     const result = await window.api.file.showOpenDialog({
       title: 'Select OBD File',
-      filters: [{ name: 'Object Builder Data', extensions: ['obd'] }]
+      filters: [{ name: 'Object Builder Data', extensions: ['obd'] }],
+      multiSelections: true
     })
     if (result.canceled || result.filePaths.length === 0) return
 
-    const selectedPath = result.filePaths[0]
-    setFilePath(selectedPath)
+    const selectedPaths = [...result.filePaths].sort(compareFileNamesNaturally)
+    setFileLabel(selectedPaths.length === 1 ? selectedPaths[0] : `${selectedPaths.length} file(s) selected`)
     setError(null)
     setLoading(true)
 
     try {
-      // Read the binary file
-      const buffer = await window.api.file.readBinary(selectedPath)
-
-      // Decode the OBD file via Web Worker (offloads LZMA decompression)
       const { workerService } = await import('../../workers/worker-service')
-      const data = await workerService.decodeObd(new Uint8Array(buffer).buffer)
-      setThingData(data)
+      const loadedEntries: ImportThingEntry[] = []
+
+      for (const selectedPath of selectedPaths) {
+        const buffer = await window.api.file.readBinary(selectedPath)
+        const thingData = await workerService.decodeObd(new Uint8Array(buffer).buffer)
+        loadedEntries.push({ filePath: selectedPath, thingData })
+      }
+
+      setEntries(loadedEntries)
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Failed to read OBD file'
       setError(message)
-      setThingData(null)
+      setEntries([])
     } finally {
       setLoading(false)
     }
   }, [])
 
   const handleConfirm = useCallback(() => {
-    if (!thingData) return
-    onConfirm({ filePath, thingData, action })
+    if (entries.length === 0 || countMismatch) return
+    onConfirm({ entries, action })
     onClose()
-  }, [filePath, thingData, action, onConfirm, onClose])
+  }, [entries, countMismatch, action, onConfirm, onClose])
 
-  const isValid = thingData !== null && !loading
+  const isValid = entries.length > 0 && !loading && !countMismatch
 
   return (
     <Modal
@@ -151,7 +165,7 @@ export function ImportThingDialog({
         {/* File selection */}
         <BrowseField
           label="File"
-          value={filePath}
+          value={fileLabel}
           onBrowse={handleBrowse}
           placeholder="Select .obd file..."
         />
@@ -162,39 +176,40 @@ export function ImportThingDialog({
 
           {error && <p className="text-xs text-error">{error}</p>}
 
-          {!loading && !error && !thingData && (
+          {!loading && !error && entries.length === 0 && (
             <p className="text-xs text-text-secondary">Select a file to preview.</p>
           )}
 
-          {thingData && !loading && (
+          {firstEntry && !loading && (
             <div className="flex flex-col gap-1">
+              <InfoRow label="Files" value={entries.length} />
               <InfoRow
                 label={t('labels.type')}
-                value={getCategoryLabel(thingData.thing.category)}
+                value={getCategoryLabel(firstEntry.thingData.thing.category)}
               />
               <InfoRow
                 label={t('labels.version')}
-                value={getVersionLabel(thingData.clientVersion)}
+                value={getVersionLabel(firstEntry.thingData.clientVersion)}
               />
               <InfoRow
                 label="OBD Version"
                 value={
-                  thingData.obdVersion === 0
+                  firstEntry.thingData.obdVersion === 0
                     ? 'v1.0'
-                    : `v${(thingData.obdVersion / 100).toFixed(1)}`
+                    : `v${(firstEntry.thingData.obdVersion / 100).toFixed(1)}`
                 }
               />
-              {thingData.thing.marketName && (
-                <InfoRow label={t('labels.name')} value={thingData.thing.marketName} />
+              {firstEntry.thingData.thing.marketName && (
+                <InfoRow label={t('labels.name')} value={firstEntry.thingData.thing.marketName} />
               )}
-              {thingData.thing.name && !thingData.thing.marketName && (
-                <InfoRow label={t('labels.name')} value={thingData.thing.name} />
+              {firstEntry.thingData.thing.name && !firstEntry.thingData.thing.marketName && (
+                <InfoRow label={t('labels.name')} value={firstEntry.thingData.thing.name} />
               )}
               <InfoRow
                 label={t('labels.sprites')}
                 value={(() => {
                   let count = 0
-                  thingData.sprites.forEach((arr) => {
+                  firstEntry.thingData.sprites.forEach((arr) => {
                     count += arr.length
                   })
                   return count
@@ -223,6 +238,11 @@ export function ImportThingDialog({
               disabled={!canReplace}
             />
           </div>
+          {countMismatch && (
+            <p className="mt-2 text-xs text-error">
+              {t('alert.invalidFileAmount', { 0: t('labels.objects').toLowerCase() })}
+            </p>
+          )}
         </FieldGroup>
       </div>
     </Modal>

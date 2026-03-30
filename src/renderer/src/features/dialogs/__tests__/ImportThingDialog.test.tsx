@@ -8,6 +8,18 @@ import React from 'react'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, fireEvent } from '@testing-library/react'
 import { ImportThingDialog } from '../ImportThingDialog'
+import { ThingCategory, createThingData, createThingType } from '../../../types'
+
+vi.mock('../../../workers/worker-service', () => ({
+  workerService: {
+    decodeObd: vi.fn(async () => {
+      const thing = createThingType()
+      thing.id = 1
+      thing.category = ThingCategory.EFFECT
+      return createThingData(0, 1098, thing, new Map())
+    })
+  }
+}))
 
 // ---------------------------------------------------------------------------
 // Mock window.api and worker-service (dynamic import in component)
@@ -128,5 +140,44 @@ describe('ImportThingDialog', () => {
   it('renders action section', () => {
     renderDialog()
     expect(screen.getByText('Action')).toBeInTheDocument()
+  })
+
+  it('browse dialog allows selecting multiple obd files', async () => {
+    renderDialog()
+
+    mockShowOpenDialog.mockResolvedValueOnce({
+      canceled: true,
+      filePaths: []
+    })
+
+    fireEvent.click(screen.getByText('Browse'))
+
+    await vi.waitFor(() => {
+      expect(mockShowOpenDialog).toHaveBeenCalledWith(
+        expect.objectContaining({ multiSelections: true })
+      )
+    })
+  })
+
+  it('shows count mismatch error when replace file count differs from selected objects', async () => {
+    renderDialog({ canReplace: true, replaceCount: 2 })
+
+    mockShowOpenDialog.mockResolvedValueOnce({
+      canceled: false,
+      filePaths: ['/tmp/1.obd']
+    })
+
+    fireEvent.click(screen.getByText('Browse'))
+
+    const replaceRadio = screen.getByRole('radio', { name: 'Replace' })
+    fireEvent.click(replaceRadio)
+
+    await vi.waitFor(() => {
+      expect(
+        screen.getByText('The number of selected objects does not equal the amount of files.')
+      ).toBeInTheDocument()
+    })
+
+    expect(screen.getByText('Import')).toBeDisabled()
   })
 })

@@ -36,7 +36,7 @@ export function CreateAssetsDialog({
   open,
   onClose,
   onConfirm,
-  defaultTransparency = false
+  defaultTransparency = true
 }: CreateAssetsDialogProps): React.JSX.Element {
   const { t } = useTranslation()
   const [selectedVersionIndex, setSelectedVersionIndex] = useState<string>('')
