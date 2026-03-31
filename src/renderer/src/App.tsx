@@ -40,6 +40,7 @@ import {
   type ThingType,
   type Version,
   FrameGroupType,
+  cloneThingType,
   createClientInfo,
   createThingData,
   getThingFrameGroup,
@@ -435,12 +436,17 @@ export function App(): React.JSX.Element {
     const editorState = useEditorStore.getState()
     if (editorState.editingThingData && editorState.editingChanged) {
       const { thing, xmlAttributes } = editorState.editingThingData
+      const sanitizedThing = cloneThingType(thing)
 
-      if (thing.category === ThingCategory.ITEM) {
-        setEditableXmlAttributes(thing.id, xmlAttributes)
+      if (sanitizedThing.category === ThingCategory.ITEM) {
+        setEditableXmlAttributes(sanitizedThing.id, xmlAttributes)
       }
 
-      useAppStore.getState().updateThing(thing.category, thing.id, thing)
+      useAppStore.getState().updateThing(
+        sanitizedThing.category,
+        sanitizedThing.id,
+        sanitizedThing
+      )
       editorState.setEditingChanged(false)
     }
   }, [])

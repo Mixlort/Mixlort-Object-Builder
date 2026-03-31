@@ -33,7 +33,7 @@ import {
   OBD_WORKER_ENCODE,
   OBD_WORKER_DECODE
 } from './types'
-import type { ClientFeatures, ThingData } from '../types'
+import { cloneThingType, type ClientFeatures, type ThingData } from '../types'
 
 // ---------------------------------------------------------------------------
 // Worker instances (lazy singletons)
@@ -111,7 +111,21 @@ export const workerService = {
     version: number,
     features: ClientFeatures
   ): Promise<ArrayBuffer> {
-    const payload: WriteDatPayload = { data, version, features }
+    const payload: WriteDatPayload = {
+      data: {
+        signature: data.signature,
+        maxItemId: data.maxItemId,
+        maxOutfitId: data.maxOutfitId,
+        maxEffectId: data.maxEffectId,
+        maxMissileId: data.maxMissileId,
+        items: data.items.map(cloneThingType),
+        outfits: data.outfits.map(cloneThingType),
+        effects: data.effects.map(cloneThingType),
+        missiles: data.missiles.map(cloneThingType)
+      },
+      version,
+      features: { ...features }
+    }
     return getDatWorker().request<ArrayBuffer>(DAT_WORKER_WRITE, payload)
   },
 

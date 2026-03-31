@@ -68,10 +68,25 @@ export class WorkerManager {
 
       const message: WorkerRequest = { id, type, payload }
 
-      if (transfer && transfer.length > 0) {
-        this.worker.postMessage(message, transfer)
-      } else {
-        this.worker.postMessage(message)
+      try {
+        if (transfer && transfer.length > 0) {
+          this.worker.postMessage(message, transfer)
+        } else {
+          this.worker.postMessage(message)
+        }
+      } catch (err) {
+        this.pending.delete(id)
+
+        if (err instanceof DOMException && err.name === 'DataCloneError') {
+          reject(
+            new Error(
+              `Worker payload could not be cloned for "${type}". The project state contains non-serializable data.`
+            )
+          )
+          return
+        }
+
+        reject(err instanceof Error ? err : new Error(String(err)))
       }
     })
   }
