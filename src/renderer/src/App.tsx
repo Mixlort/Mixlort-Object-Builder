@@ -90,7 +90,7 @@ import {
 } from './features/dialogs'
 import { SPRITE_DIMENSIONS } from './data/sprite-dimensions'
 import { createObjectBuilderSettings, type ObjectBuilderSettings } from '../../shared/settings'
-import { readDatWithFallback } from './services/dat'
+import { readDat, readDatWithFallback, writeDat } from './services/dat'
 import { createOtfiData, parseOtfi, writeOtfi } from './services/otfi'
 import { clearThumbnailCache } from './hooks/use-sprite-thumbnail'
 import { useKeyboardShortcuts } from './hooks/use-keyboard-shortcuts'
@@ -222,6 +222,59 @@ function joinPath(directory: string, fileName: string): string {
 
 function getFilteredExportCategoryLabel(category: ThingCategory): string {
   return category === ThingCategory.MISSILE ? 'Missiles' : 'Effects'
+}
+
+function getMinThingIdForCategory(category: ThingCategory): number {
+  return category === ThingCategory.ITEM ? 100 : 1
+}
+
+function validateThingForCompile(
+  thing: ThingType,
+  version: number,
+  features: ClientFeatures,
+  defaultDurations: Record<string, number>
+): ThingType {
+  const sanitizedThing = cloneThingType(thing)
+  structuredClone(sanitizedThing)
+
+  const validationThing = cloneThingType(sanitizedThing)
+  validationThing.id = getMinThingIdForCategory(validationThing.category)
+
+  const validationData = {
+    signature: 0,
+    maxItemId: 99,
+    maxOutfitId: 0,
+    maxEffectId: 0,
+    maxMissileId: 0,
+    items: [] as ThingType[],
+    outfits: [] as ThingType[],
+    effects: [] as ThingType[],
+    missiles: [] as ThingType[]
+  }
+
+  switch (validationThing.category) {
+    case ThingCategory.ITEM:
+      validationData.maxItemId = validationThing.id
+      validationData.items = [validationThing]
+      break
+    case ThingCategory.OUTFIT:
+      validationData.maxOutfitId = validationThing.id
+      validationData.outfits = [validationThing]
+      break
+    case ThingCategory.EFFECT:
+      validationData.maxEffectId = validationThing.id
+      validationData.effects = [validationThing]
+      break
+    case ThingCategory.MISSILE:
+      validationData.maxMissileId = validationThing.id
+      validationData.missiles = [validationThing]
+      break
+  }
+
+  const buffer = writeDat(validationData, version, features)
+  readDat(buffer, version, features, (category) => defaultDurations[category] ?? 0)
+
+  return sanitizedThing
 }
 
 function featurePayload(features: ClientFeatures): ClientFeatures {
@@ -1320,6 +1373,43 @@ export function App(): React.JSX.Element {
       appState.setLocked(true)
 
       try {
+        const settings = await window.api.settings.load()
+        const defaultDurations = getDefaultDurations(settings)
+        const skippedEntries: Array<{ filePath: string; reason: string }> = []
+        let importedCount = 0
+
+        const prepareImportedThing = (entry: ImportThingResult['entries'][number]) => {
+          let imported:
+            | ReturnType<typeof materializeImportedThingData>
+            | null = null
+
+          try {
+            validateThingForCompile(
+              entry.thingData.thing,
+              importClientInfo.clientVersion,
+              importClientInfo.features,
+              defaultDurations
+            )
+
+            imported = materializeImportedThingData({
+              thingData: entry.thingData,
+              transparent: importClientInfo.features.transparency,
+              addSprite: (compressed) => useSpriteStore.getState().addSprite(compressed)
+            })
+
+            return imported
+          } catch (err) {
+            if (imported?.addedSpriteIds.length) {
+              useSpriteStore.getState().removeSprites(imported.addedSpriteIds)
+            }
+
+            const reason = err instanceof Error ? err.message : String(err)
+            skippedEntries.push({ filePath: entry.filePath, reason })
+            addLog('warning', `Skipped import ${getFileName(entry.filePath)}: ${reason}`)
+            return null
+          }
+        }
+
         if (result.action === 'replace') {
           const targetIds =
             selectedThingIds.length > 0
@@ -1347,34 +1437,32 @@ export function App(): React.JSX.Element {
             )
           }
 
+          const replacedTargetIds: number[] = []
+
           for (let index = 0; index < result.entries.length; index++) {
             const entry = result.entries[index]
-            const imported = materializeImportedThingData({
-              thingData: entry.thingData,
-              transparent: importClientInfo.features.transparency,
-              addSprite: (compressed) => useSpriteStore.getState().addSprite(compressed)
-            })
+            const imported = prepareImportedThing(entry)
+            if (!imported) continue
 
             const targetId = targetIds[index]
             imported.thing.id = targetId
             appState.updateThing(currentCategory, targetId, imported.thing)
+            replacedTargetIds.push(targetId)
+            importedCount++
           }
 
           const editorThing = useEditorStore.getState().editingThingData?.thing
-          if (editorThing && targetIds.includes(editorThing.id)) {
+          if (editorThing && replacedTargetIds.includes(editorThing.id)) {
             loadThingIntoEditor(editorThing.id, currentCategory)
           }
 
-          addLog('info', `Import complete: replaced ${targetIds.length} ${currentCategory}(s)`)
+          addLog('info', `Import complete: replaced ${importedCount} ${currentCategory}(s)`)
         } else {
           let lastAddedId: number | null = null
 
           for (const entry of result.entries) {
-            const imported = materializeImportedThingData({
-              thingData: entry.thingData,
-              transparent: importClientInfo.features.transparency,
-              addSprite: (compressed) => useSpriteStore.getState().addSprite(compressed)
-            })
+            const imported = prepareImportedThing(entry)
+            if (!imported) continue
 
             const category = imported.thing.category
             const categoryThings = appState.getThingsByCategory(category)
@@ -1391,18 +1479,25 @@ export function App(): React.JSX.Element {
             imported.thing.id = targetId
             appState.addThing(category, imported.thing)
             lastAddedId = targetId
+            importedCount++
           }
 
           if (lastAddedId !== null) {
             appState.selectThing(lastAddedId)
           }
 
-          addLog('info', `Import complete: added ${result.entries.length} object(s)`)
+          addLog('info', `Import complete: added ${importedCount} object(s)`)
         }
 
-        appState.setSpriteCount(useSpriteStore.getState().getSpriteCount())
-        appState.setProjectChanged(true)
-        await window.api.menu.updateState({ clientChanged: true })
+        if (skippedEntries.length > 0) {
+          addLog('warning', `Import skipped ${skippedEntries.length} object(s) with invalid data`)
+        }
+
+        if (importedCount > 0) {
+          appState.setSpriteCount(useSpriteStore.getState().getSpriteCount())
+          appState.setProjectChanged(true)
+          await window.api.menu.updateState({ clientChanged: true })
+        }
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err)
         addLog('error', `Failed to import object: ${message}`)
