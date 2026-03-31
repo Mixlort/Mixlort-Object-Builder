@@ -151,6 +151,19 @@ describe('readBinaryFile / writeBinaryFile', () => {
     expect(new Uint8Array(result)).toEqual(new Uint8Array(original))
   })
 
+  it('should overwrite an existing binary file without leaving temp files', async () => {
+    const filePath = join(testDir, 'overwrite.bin')
+    await writeFile(filePath, Buffer.from([9, 9, 9]))
+
+    await writeBinaryFile(filePath, new Uint8Array([1, 2, 3, 4]).buffer)
+
+    const result = await readBinaryFile(filePath)
+    expect(new Uint8Array(result)).toEqual(new Uint8Array([1, 2, 3, 4]))
+
+    const files = await listFiles(testDir)
+    expect(files.filter((name) => name.includes('.tmp-'))).toEqual([])
+  })
+
   it('should throw on read of non-existent file', async () => {
     await expect(readBinaryFile(join(testDir, 'nope.bin'))).rejects.toThrow()
   })
@@ -197,6 +210,19 @@ describe('readTextFile / writeTextFile', () => {
     const result = await readTextFile(filePath)
 
     expect(result).toBe('nested')
+  })
+
+  it('should overwrite an existing text file without leaving temp files', async () => {
+    const filePath = join(testDir, 'overwrite.txt')
+    await writeFile(filePath, 'before')
+
+    await writeTextFile(filePath, 'after')
+
+    const result = await readTextFile(filePath)
+    expect(result).toBe('after')
+
+    const files = await listFiles(testDir)
+    expect(files.filter((name) => name.includes('.tmp-'))).toEqual([])
   })
 })
 

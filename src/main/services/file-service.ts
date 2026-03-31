@@ -8,7 +8,7 @@
  */
 
 import { dialog, BrowserWindow } from 'electron'
-import { readFile, writeFile, stat, readdir, access, mkdir } from 'fs/promises'
+import { readFile, stat, readdir, access, mkdir, open, rename, unlink } from 'fs/promises'
 import { watch, type FSWatcher } from 'fs'
 import { join, dirname, basename, extname } from 'path'
 import { constants as fsConstants } from 'fs'
@@ -142,6 +142,46 @@ export async function showDirectoryDialog(
 // Binary File I/O
 // ---------------------------------------------------------------------------
 
+function makeAtomicTempPath(filePath: string): string {
+  return `${filePath}.tmp-${process.pid}-${Date.now()}-${Math.random().toString(16).slice(2)}`
+}
+
+async function commitAtomicTempFile(tempPath: string, filePath: string): Promise<void> {
+  try {
+    await rename(tempPath, filePath)
+  } catch (error) {
+    const code = error && typeof error === 'object' && 'code' in error ? error.code : null
+    if (code === 'EEXIST' || code === 'EPERM' || code === 'EBUSY') {
+      await unlink(filePath).catch(() => undefined)
+      await rename(tempPath, filePath)
+      return
+    }
+    throw error
+  }
+}
+
+async function writeBufferAtomic(filePath: string, buffer: Buffer): Promise<void> {
+  const dir = dirname(filePath)
+  await mkdir(dir, { recursive: true })
+
+  const tempPath = makeAtomicTempPath(filePath)
+  const handle = await open(tempPath, 'w')
+
+  try {
+    await handle.writeFile(buffer)
+    await handle.sync()
+  } finally {
+    await handle.close()
+  }
+
+  try {
+    await commitAtomicTempFile(tempPath, filePath)
+  } catch (error) {
+    await unlink(tempPath).catch(() => undefined)
+    throw error
+  }
+}
+
 /**
  * Reads a file as an ArrayBuffer (async).
  * Equivalent to legacy FileStream read operations.
@@ -157,9 +197,7 @@ export async function readBinaryFile(filePath: string): Promise<ArrayBuffer> {
  * Equivalent to legacy SaveHelper / FileStream write operations.
  */
 export async function writeBinaryFile(filePath: string, data: ArrayBuffer): Promise<void> {
-  const dir = dirname(filePath)
-  await mkdir(dir, { recursive: true })
-  await writeFile(filePath, Buffer.from(data))
+  await writeBufferAtomic(filePath, Buffer.from(data))
 }
 
 /**
@@ -181,9 +219,7 @@ export async function writeTextFile(
   content: string,
   encoding: BufferEncoding = 'utf-8'
 ): Promise<void> {
-  const dir = dirname(filePath)
-  await mkdir(dir, { recursive: true })
-  await writeFile(filePath, content, { encoding })
+  await writeBufferAtomic(filePath, Buffer.from(content, encoding))
 }
 
 // ---------------------------------------------------------------------------
