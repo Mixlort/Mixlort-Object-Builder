@@ -934,7 +934,7 @@ export function App(): React.JSX.Element {
         setLoadingLabel('Validating metadata...')
         const settings = await window.api.settings.load()
         await workerService.readDat(
-          datBuffer,
+          datBuffer.slice(0),
           params.version.value,
           params.features,
           getDefaultDurations(settings)
