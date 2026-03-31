@@ -34,7 +34,15 @@ import type {
   MergeProjectResult
 } from '../../shared/project-state'
 import { createProjectState, applyProjectVersionDefaults } from '../../shared/project-state'
-import { saveRecoveryData, clearRecoveryData, backupFiles } from './recovery-service'
+import {
+  saveRecoveryData,
+  clearRecoveryData,
+  backupFiles,
+  beginCompileRecovery,
+  markCompileRecoveryCompleted,
+  clearCompileRecovery,
+  restoreBackedUpFiles
+} from './recovery-service'
 
 // ---------------------------------------------------------------------------
 // Project Service
@@ -202,67 +210,80 @@ export async function compileProject(params: CompileProjectParams): Promise<void
     throw new Error('No project loaded')
   }
 
+  const datDir = dirname(params.datFilePath)
+  const datBaseName = basename(params.datFilePath, '.dat')
+  const otfiPath = join(datDir, `${datBaseName}.otfi`)
+
   // Backup existing files before overwriting
-  const filesToBackup = [params.datFilePath, params.sprFilePath]
+  const filesToBackup = [params.datFilePath, params.sprFilePath, otfiPath]
   if (params.serverItemsPath) {
     const otbPath = join(params.serverItemsPath, 'items.otb')
     const xmlPath = join(params.serverItemsPath, 'items.xml')
     filesToBackup.push(otbPath, xmlPath)
   }
+
   backupFiles(filesToBackup)
+  beginCompileRecovery(filesToBackup)
 
-  // Write DAT file
-  await writeBinaryFile(params.datFilePath, params.datBuffer)
+  try {
+    // Write DAT file
+    await writeBinaryFile(params.datFilePath, params.datBuffer)
 
-  // Write SPR file
-  await writeBinaryFile(params.sprFilePath, params.sprBuffer)
+    // Write SPR file
+    await writeBinaryFile(params.sprFilePath, params.sprBuffer)
 
-  // Write server items if provided
-  if (params.serverItemsPath) {
-    if (params.otbBuffer) {
-      const otbPath = join(params.serverItemsPath, 'items.otb')
-      await writeBinaryFile(otbPath, params.otbBuffer)
+    // Write server items if provided
+    if (params.serverItemsPath) {
+      if (params.otbBuffer) {
+        const otbPath = join(params.serverItemsPath, 'items.otb')
+        await writeBinaryFile(otbPath, params.otbBuffer)
+      }
+
+      if (params.xmlContent) {
+        const xmlPath = join(params.serverItemsPath, 'items.xml')
+        await writeTextFile(xmlPath, params.xmlContent, 'latin1')
+      }
     }
 
-    if (params.xmlContent) {
-      const xmlPath = join(params.serverItemsPath, 'items.xml')
-      await writeTextFile(xmlPath, params.xmlContent, 'latin1')
+    // Write .otfi file alongside DAT
+    if (params.otfiContent) {
+      await writeTextFile(otfiPath, params.otfiContent)
     }
-  }
 
-  // Write .otfi file alongside DAT
-  if (params.otfiContent) {
-    const datDir = dirname(params.datFilePath)
-    const datBaseName = basename(params.datFilePath, '.dat')
-    const otfiPath = join(datDir, `${datBaseName}.otfi`)
-    await writeTextFile(otfiPath, params.otfiContent)
-  }
+    markCompileRecoveryCompleted()
 
-  // Update state with new file paths
-  state.datFilePath = params.datFilePath
-  state.sprFilePath = params.sprFilePath
-  state.serverItemsPath = params.serverItemsPath ?? state.serverItemsPath
-  state.isTemporary = false
-  state.changed = false
-  state.loadedFileName = basename(params.datFilePath)
+    // Update state with new file paths
+    state.datFilePath = params.datFilePath
+    state.sprFilePath = params.sprFilePath
+    state.serverItemsPath = params.serverItemsPath ?? state.serverItemsPath
+    state.isTemporary = false
+    state.changed = false
+    state.loadedFileName = basename(params.datFilePath)
 
-  // Update watchers for new paths
-  if (state.datFilePath) {
-    watchFile(state.datFilePath, () => {})
-  }
-  if (state.sprFilePath) {
-    watchFile(state.sprFilePath, () => {})
-  }
+    // Update watchers for new paths
+    if (state.datFilePath) {
+      watchFile(state.datFilePath, () => {})
+    }
+    if (state.sprFilePath) {
+      watchFile(state.sprFilePath, () => {})
+    }
 
-  // Update recovery metadata with new file paths
-  saveRecoveryData({
-    datFilePath: params.datFilePath,
-    sprFilePath: params.sprFilePath,
-    versionValue: params.versionValue,
-    serverItemsPath: params.serverItemsPath ?? null,
-    features: { ...params.features },
-    timestamp: Date.now()
-  })
+    // Update recovery metadata with new file paths
+    saveRecoveryData({
+      datFilePath: params.datFilePath,
+      sprFilePath: params.sprFilePath,
+      versionValue: params.versionValue,
+      serverItemsPath: params.serverItemsPath ?? null,
+      features: { ...params.features },
+      timestamp: Date.now()
+    })
+
+    clearCompileRecovery()
+  } catch (error) {
+    restoreBackedUpFiles(filesToBackup)
+    clearCompileRecovery()
+    throw error
+  }
 }
 
 // ---------------------------------------------------------------------------

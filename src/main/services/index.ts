@@ -94,10 +94,17 @@ export {
 
 export {
   type RecoveryData,
+  type CompileRecoveryData,
+  type CompileRecoveryResolution,
   saveRecoveryData,
   clearRecoveryData,
   getRecoveryData,
+  beginCompileRecovery,
+  markCompileRecoveryCompleted,
+  clearCompileRecovery,
   backupFiles,
+  restoreBackedUpFiles,
+  resolveCompileRecoveryOnStartup,
   resetRecoveryService
 } from './recovery-service'
 

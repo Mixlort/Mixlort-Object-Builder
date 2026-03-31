@@ -440,6 +440,33 @@ describe('compileProject', () => {
     expect(xmlResult).toBe('<items/>')
   })
 
+  it('should restore DAT and SPR from backups if compile fails mid-write', async () => {
+    await mkdir(join(testDir, 'output'), { recursive: true })
+    await writeFile(datPath, Buffer.from([0xaa, 0xbb, 0xcc]))
+    await writeFile(sprPath, Buffer.from([0xdd, 0xee, 0xff]))
+
+    const blockedServerItemsPath = join(testDir, 'blocked-server-items')
+    await writeFile(blockedServerItemsPath, 'not-a-directory')
+
+    await expect(
+      compileProject({
+        datFilePath: datPath,
+        sprFilePath: sprPath,
+        datBuffer: new Uint8Array([1, 2, 3, 4]).buffer,
+        sprBuffer: new Uint8Array([5, 6, 7, 8]).buffer,
+        versionValue: 1056,
+        datSignature: 0x4e119462,
+        sprSignature: 0x56c1d9fa,
+        features: makeFeatures(),
+        serverItemsPath: blockedServerItemsPath,
+        otbBuffer: new Uint8Array([0xfe]).buffer
+      })
+    ).rejects.toThrow()
+
+    expect(Array.from(await readFile(datPath))).toEqual([0xaa, 0xbb, 0xcc])
+    expect(Array.from(await readFile(sprPath))).toEqual([0xdd, 0xee, 0xff])
+  })
+
   it('should update state after compile', async () => {
     markProjectChanged()
     expect(getProjectState().changed).toBe(true)

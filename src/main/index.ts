@@ -3,8 +3,8 @@ import { join } from 'path'
 import { registerIpcHandlers } from './ipc-handlers'
 import { loadWindowState, saveWindowState, loadSettings } from './services/settings-service'
 import { buildApplicationMenu, updateMenuState } from './services/menu-service'
-import { initLogger, closeLogger, writeError } from './services/logger-service'
-import { clearRecoveryData } from './services/recovery-service'
+import { initLogger, closeLogger, writeError, writeLog } from './services/logger-service'
+import { clearRecoveryData, resolveCompileRecoveryOnStartup } from './services/recovery-service'
 import { initUpdater } from './services/updater-service'
 import { APP_CONFIRM_CLOSE } from '../shared/ipc-channels'
 
@@ -172,6 +172,16 @@ process.on('unhandledRejection', (reason) => {
 
 app.whenReady().then(async () => {
   initLogger()
+  const compileRecovery = resolveCompileRecoveryOnStartup()
+  if (compileRecovery.status === 'restored') {
+    writeLog(
+      'warning',
+      `Recovered interrupted compile by restoring backup files: ${compileRecovery.restoredFiles.join(', ')}`
+    )
+  } else if (compileRecovery.status === 'clearedCompleted') {
+    writeLog('info', 'Cleared stale completed compile recovery marker')
+  }
+
   registerIpcHandlers()
 
   // Load settings and build menu with initial panel visibility state

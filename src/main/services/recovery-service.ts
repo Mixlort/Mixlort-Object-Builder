@@ -28,17 +28,37 @@ export interface RecoveryData {
   timestamp: number
 }
 
+export interface CompileRecoveryData {
+  status: 'writing' | 'completed'
+  files: string[]
+  startedAt: number
+  completedAt?: number
+}
+
+export interface CompileRecoveryResolution {
+  status: 'none' | 'restored' | 'clearedCompleted'
+  restoredFiles: string[]
+}
+
 // ---------------------------------------------------------------------------
 // State
 // ---------------------------------------------------------------------------
 
 let recoveryPath = ''
+let compileRecoveryPath = ''
 
 function getRecoveryPath(): string {
   if (!recoveryPath) {
     recoveryPath = join(app.getPath('userData'), 'recovery.json')
   }
   return recoveryPath
+}
+
+function getCompileRecoveryPath(): string {
+  if (!compileRecoveryPath) {
+    compileRecoveryPath = join(app.getPath('userData'), 'compile-recovery.json')
+  }
+  return compileRecoveryPath
 }
 
 // ---------------------------------------------------------------------------
@@ -90,6 +110,63 @@ export function getRecoveryData(): RecoveryData | null {
   }
 }
 
+function saveCompileRecoveryData(data: CompileRecoveryData): void {
+  try {
+    writeFileSync(getCompileRecoveryPath(), JSON.stringify(data, null, 2), 'utf-8')
+  } catch {
+    // Silently ignore write errors (non-critical)
+  }
+}
+
+function getCompileRecoveryData(): CompileRecoveryData | null {
+  try {
+    const p = getCompileRecoveryPath()
+    if (!existsSync(p)) return null
+    const content = readFileSync(p, 'utf-8')
+    const data = JSON.parse(content)
+    if (
+      data &&
+      Array.isArray(data.files) &&
+      (data.status === 'writing' || data.status === 'completed')
+    ) {
+      return data as CompileRecoveryData
+    }
+    return null
+  } catch {
+    return null
+  }
+}
+
+export function beginCompileRecovery(filePaths: string[]): void {
+  saveCompileRecoveryData({
+    status: 'writing',
+    files: Array.from(new Set(filePaths)),
+    startedAt: Date.now()
+  })
+}
+
+export function markCompileRecoveryCompleted(): void {
+  const current = getCompileRecoveryData()
+  if (!current) return
+
+  saveCompileRecoveryData({
+    ...current,
+    status: 'completed',
+    completedAt: Date.now()
+  })
+}
+
+export function clearCompileRecovery(): void {
+  try {
+    const p = getCompileRecoveryPath()
+    if (existsSync(p)) {
+      unlinkSync(p)
+    }
+  } catch {
+    // Silently ignore delete errors (non-critical)
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Backup before compile
 // ---------------------------------------------------------------------------
@@ -110,10 +187,49 @@ export function backupFiles(filePaths: string[]): void {
   }
 }
 
+export function restoreBackedUpFiles(filePaths: string[]): string[] {
+  const restoredFiles: string[] = []
+
+  for (const filePath of filePaths) {
+    const backupPath = `${filePath}.bak`
+    try {
+      if (!existsSync(backupPath)) {
+        continue
+      }
+      copyFileSync(backupPath, filePath)
+      restoredFiles.push(filePath)
+    } catch {
+      // Silently ignore restore errors (non-critical)
+    }
+  }
+
+  return restoredFiles
+}
+
+export function resolveCompileRecoveryOnStartup(): CompileRecoveryResolution {
+  const data = getCompileRecoveryData()
+  if (!data) {
+    return { status: 'none', restoredFiles: [] }
+  }
+
+  if (data.status === 'completed') {
+    clearCompileRecovery()
+    return { status: 'clearedCompleted', restoredFiles: [] }
+  }
+
+  const restoredFiles = restoreBackedUpFiles(data.files)
+  clearCompileRecovery()
+  return {
+    status: 'restored',
+    restoredFiles
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Testing
 // ---------------------------------------------------------------------------
 
 export function resetRecoveryService(): void {
   recoveryPath = ''
+  compileRecoveryPath = ''
 }
