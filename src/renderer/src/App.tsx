@@ -41,6 +41,7 @@ import {
   type Version,
   FrameGroupType,
   cloneThingType,
+  createThing,
   createClientInfo,
   createThingData,
   getThingFrameGroup,
@@ -1375,13 +1376,13 @@ export function App(): React.JSX.Element {
       try {
         const settings = await window.api.settings.load()
         const defaultDurations = getDefaultDurations(settings)
-        const skippedEntries: Array<{ filePath: string; reason: string }> = []
         let importedCount = 0
 
         const prepareImportedThing = (entry: ImportThingResult['entries'][number]) => {
           let imported:
             | ReturnType<typeof materializeImportedThingData>
             | null = null
+          const category = entry.thingData.thing.category
 
           try {
             validateThingForCompile(
@@ -1404,9 +1405,20 @@ export function App(): React.JSX.Element {
             }
 
             const reason = err instanceof Error ? err.message : String(err)
-            skippedEntries.push({ filePath: entry.filePath, reason })
-            addLog('warning', `Skipped import ${getFileName(entry.filePath)}: ${reason}`)
-            return null
+            addLog(
+              'warning',
+              `Imported ${getFileName(entry.filePath)} as blank ${category}: ${reason}`
+            )
+
+            return {
+              thing: createThing(
+                0,
+                category,
+                importClientInfo.features.frameGroups,
+                defaultDurations[category] ?? 0
+              ),
+              addedSpriteIds: []
+            }
           }
         }
 
@@ -1442,7 +1454,6 @@ export function App(): React.JSX.Element {
           for (let index = 0; index < result.entries.length; index++) {
             const entry = result.entries[index]
             const imported = prepareImportedThing(entry)
-            if (!imported) continue
 
             const targetId = targetIds[index]
             imported.thing.id = targetId
@@ -1462,7 +1473,6 @@ export function App(): React.JSX.Element {
 
           for (const entry of result.entries) {
             const imported = prepareImportedThing(entry)
-            if (!imported) continue
 
             const category = imported.thing.category
             const categoryThings = appState.getThingsByCategory(category)
@@ -1487,10 +1497,6 @@ export function App(): React.JSX.Element {
           }
 
           addLog('info', `Import complete: added ${importedCount} object(s)`)
-        }
-
-        if (skippedEntries.length > 0) {
-          addLog('warning', `Import skipped ${skippedEntries.length} object(s) with invalid data`)
         }
 
         if (importedCount > 0) {
