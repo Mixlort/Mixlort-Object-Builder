@@ -87,6 +87,7 @@ import {
   type ImportThingResult,
   type BulkEditResult
 } from './features/dialogs'
+import { SPRITE_DIMENSIONS } from './data/sprite-dimensions'
 import { createObjectBuilderSettings, type ObjectBuilderSettings } from '../../shared/settings'
 import { readDatWithFallback } from './services/dat'
 import { createOtfiData, parseOtfi, writeOtfi } from './services/otfi'
@@ -179,6 +180,28 @@ function getMaxSpriteId(sprites: Map<number, Uint8Array>): number {
     if (id > maxId) maxId = id
   }
   return maxId
+}
+
+function getDefaultDurations(settings: ObjectBuilderSettings): Record<string, number> {
+  return {
+    item: getDefaultDuration(settings, ThingCategory.ITEM),
+    outfit: getDefaultDuration(settings, ThingCategory.OUTFIT),
+    effect: getDefaultDuration(settings, ThingCategory.EFFECT),
+    missile: getDefaultDuration(settings, ThingCategory.MISSILE)
+  }
+}
+
+function resolveSpriteDimension(
+  spriteSize: number,
+  spriteDataSize: number,
+  fallback: (typeof SPRITE_DIMENSIONS)[number]
+): (typeof SPRITE_DIMENSIONS)[number] {
+  return (
+    SPRITE_DIMENSIONS.find(
+      (dimension) =>
+        dimension.size === spriteSize && dimension.dataSize === spriteDataSize
+    ) ?? fallback
+  )
 }
 
 function getBaseName(filePath: string): string {
@@ -597,7 +620,7 @@ export function App(): React.JSX.Element {
         unloadServerItems()
 
         // Build features from dialog result
-        const features: ClientFeatures = {
+        const dialogFeatures: ClientFeatures = {
           extended: result.extended,
           transparency: result.transparency,
           improvedAnimations: result.improvedAnimations,
@@ -614,12 +637,12 @@ export function App(): React.JSX.Element {
           datSignature: result.version.datSignature,
           sprSignature: result.version.sprSignature,
           features: {
-            extended: features.extended,
-            transparency: features.transparency,
-            improvedAnimations: features.improvedAnimations,
-            frameGroups: features.frameGroups,
-            metadataController: features.metadataController,
-            attributeServer: features.attributeServer
+            extended: dialogFeatures.extended,
+            transparency: dialogFeatures.transparency,
+            improvedAnimations: dialogFeatures.improvedAnimations,
+            frameGroups: dialogFeatures.frameGroups,
+            metadataController: dialogFeatures.metadataController,
+            attributeServer: dialogFeatures.attributeServer
           },
           serverItemsPath: result.serverItemsDirectory ?? null
         }
@@ -630,19 +653,42 @@ export function App(): React.JSX.Element {
         // Load settings for default durations
         setLoadingLabel('Parsing metadata...')
         const settings = await window.api.settings.load()
-        const defaultDurations: Record<string, number> = {
-          item: getDefaultDuration(settings, ThingCategory.ITEM),
-          outfit: getDefaultDuration(settings, ThingCategory.OUTFIT),
-          effect: getDefaultDuration(settings, ThingCategory.EFFECT),
-          missile: getDefaultDuration(settings, ThingCategory.MISSILE)
+        const defaultDurations = getDefaultDurations(settings)
+
+        // OTFI is authoritative for the binary format that was last compiled.
+        // Use it before parsing DAT/SPR so reopen stays aligned with the file.
+        let otfiData: ReturnType<typeof parseOtfi> | null = null
+        if (loadResult.otfiContent) {
+          otfiData = parseOtfi(loadResult.otfiContent)
+          if (otfiData) {
+            addLog('info', 'OTFI loaded')
+          }
         }
+
+        const configuredFeatures: ClientFeatures = otfiData
+          ? {
+              ...dialogFeatures,
+              ...otfiData.features,
+              metadataController: otfiData.features.metadataController ?? 'default',
+              attributeServer:
+                otfiData.features.attributeServer ?? result.attributeServer ?? null
+            }
+          : dialogFeatures
+
+        const resolvedSpriteDimension = otfiData
+          ? resolveSpriteDimension(
+              otfiData.spriteSize,
+              otfiData.spriteDataSize,
+              result.spriteDimension
+            )
+          : result.spriteDimension
 
         // Parse DAT (offloaded to Web Worker) with a compatibility fallback for
         // custom 10.x clients that keep modern flags but do not encode frame groups.
         const datRead = await readDatWithFallback({
           buffer: loadResult.datBuffer,
           version: result.version.value,
-          features,
+          features: configuredFeatures,
           defaultDurations,
           readDat: (buffer, version, readFeatures, durations) =>
             workerService.readDat(buffer, version, readFeatures, durations)
@@ -674,7 +720,7 @@ export function App(): React.JSX.Element {
           const serverItemsResult = loadServerItems({
             otbBuffer: loadResult.otbBuffer,
             xmlContent: loadResult.xmlContent ?? undefined,
-            attributeServer: result.attributeServer
+            attributeServer: configuredFeatures.attributeServer ?? result.attributeServer
           })
 
           otbInfo = {
@@ -701,15 +747,6 @@ export function App(): React.JSX.Element {
 
           if (loadResult.xmlContent) {
             addLog('info', 'items.xml loaded')
-          }
-        }
-
-        // Parse OTFI (optional)
-        let otfiData: ReturnType<typeof parseOtfi> | null = null
-        if (loadResult.otfiContent) {
-          otfiData = parseOtfi(loadResult.otfiContent)
-          if (otfiData) {
-            addLog('info', 'OTFI loaded')
           }
         }
 
@@ -741,8 +778,8 @@ export function App(): React.JSX.Element {
           otbMajorVersion: otbInfo?.majorVersion ?? 0,
           otbMinorVersion: otbInfo?.minorVersion ?? 0,
           otbItemsCount: otbInfo?.count ?? 0,
-          spriteSize: result.spriteDimension.size,
-          spriteDataSize: result.spriteDimension.dataSize,
+          spriteSize: resolvedSpriteDimension.size,
+          spriteDataSize: resolvedSpriteDimension.dataSize,
           loadedFileName: fileName
         }
 
@@ -832,6 +869,15 @@ export function App(): React.JSX.Element {
           },
           params.version.value,
           params.features
+        )
+
+        setLoadingLabel('Validating metadata...')
+        const settings = await window.api.settings.load()
+        await workerService.readDat(
+          datBuffer,
+          params.version.value,
+          params.features,
+          getDefaultDurations(settings)
         )
 
         setLoadingLabel('Compiling sprites...')

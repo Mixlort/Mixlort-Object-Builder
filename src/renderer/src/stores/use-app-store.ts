@@ -310,20 +310,22 @@ export const useAppStore = create<AppState & AppActions>()((set, get) => ({
 
   addThing(category, thing) {
     const key = getThingsKey(category)
+    const normalizedThing = { ...thing, category }
     set((state) => ({
       things: {
         ...state.things,
-        [key]: [...state.things[key], thing]
+        [key]: [...state.things[key], normalizedThing].sort((a, b) => a.id - b.id)
       }
     }))
   },
 
   updateThing(category, id, thing) {
     const key = getThingsKey(category)
+    const normalizedThing = { ...thing, id, category }
     set((state) => ({
       things: {
         ...state.things,
-        [key]: state.things[key].map((t) => (t.id === id ? thing : t))
+        [key]: state.things[key].map((t) => (t.id === id ? normalizedThing : t))
       }
     }))
   },

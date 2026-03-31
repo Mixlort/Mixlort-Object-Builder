@@ -12,7 +12,10 @@ import {
   type ThingType,
   ThingCategory as TC,
   type FrameGroup,
+  createFrameGroup,
   getThingFrameGroup,
+  getFrameGroupTotalSprites,
+  makeOutfitFrameGroup,
   type ClientFeatures,
   Direction,
   MetadataFlags1,
@@ -79,6 +82,34 @@ export function writeDat(
   return writer.toArrayBuffer()
 }
 
+function createFallbackFrameGroup(thing: ThingType, groupType: 0 | 1): FrameGroup {
+  if (thing.category === TC.OUTFIT) {
+    const frameGroup = makeOutfitFrameGroup(0)
+    frameGroup.type = groupType
+    return frameGroup
+  }
+
+  const frameGroup = createFrameGroup()
+  frameGroup.type = groupType
+  if (thing.category === TC.MISSILE) {
+    frameGroup.patternX = 3
+    frameGroup.patternY = 3
+  }
+  frameGroup.spriteIndex = new Array(getFrameGroupTotalSprites(frameGroup)).fill(0)
+  return frameGroup
+}
+
+function normalizeSpriteIndex(frameGroup: FrameGroup): number[] {
+  const totalSprites = getFrameGroupTotalSprites(frameGroup)
+  const spriteIndex = new Array<number>(totalSprites).fill(0)
+
+  for (let i = 0; i < totalSprites; i++) {
+    spriteIndex[i] = frameGroup.spriteIndex[i] ?? 0
+  }
+
+  return spriteIndex
+}
+
 // ---------------------------------------------------------------------------
 // Texture patterns (shared across all versions)
 // ---------------------------------------------------------------------------
@@ -95,7 +126,7 @@ function writeTexturePatterns(
 
   let groupCount = 1
   if (useFrameGroups && thing.category === TC.OUTFIT) {
-    groupCount = thing.frameGroups.length
+    groupCount = Math.max(thing.frameGroups.length, 1)
     writer.writeUint8(groupCount)
   }
 
@@ -106,8 +137,9 @@ function writeTexturePatterns(
       writer.writeUint8(group)
     }
 
-    const frameGroup: FrameGroup | undefined = getThingFrameGroup(thing, groupType as 0 | 1)
-    if (!frameGroup) continue
+    const frameGroup =
+      getThingFrameGroup(thing, groupType as 0 | 1) ??
+      createFallbackFrameGroup(thing, groupType as 0 | 1)
 
     writer.writeUint8(frameGroup.width)
     writer.writeUint8(frameGroup.height)
@@ -124,7 +156,7 @@ function writeTexturePatterns(
     }
     writer.writeUint8(frameGroup.frames)
 
-    if (improvedAnimations && frameGroup.isAnimation) {
+    if (improvedAnimations && frameGroup.frames > 1) {
       writer.writeUint8(frameGroup.animationMode)
       writer.writeInt32(frameGroup.loopCount)
       writer.writeInt8(frameGroup.startFrame)
@@ -136,7 +168,7 @@ function writeTexturePatterns(
       }
     }
 
-    const spriteIndex = frameGroup.spriteIndex
+    const spriteIndex = normalizeSpriteIndex(frameGroup)
     for (let i = 0; i < spriteIndex.length; i++) {
       if (extended) {
         writer.writeUint32(spriteIndex[i])

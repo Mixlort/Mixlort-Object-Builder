@@ -639,4 +639,82 @@ describe('readDat properties', () => {
     expect(result.effects).toHaveLength(0)
     expect(result.missiles).toHaveLength(0)
   })
+
+  it('pads missing sprite slots for malformed blank effects and missiles', () => {
+    const features = createClientFeatures()
+    const version = 1056
+
+    const effect = createThingType()
+    effect.id = 1
+    effect.category = TC.EFFECT
+    setThingFrameGroup(effect, 0, createFrameGroup())
+
+    const missile = createThingType()
+    missile.id = 1
+    missile.category = TC.MISSILE
+    const missileGroup = createFrameGroup()
+    missileGroup.patternX = 3
+    missileGroup.patternY = 3
+    setThingFrameGroup(missile, 0, missileGroup)
+
+    const data = {
+      signature: 0x12345678,
+      maxItemId: 99,
+      maxOutfitId: 0,
+      maxEffectId: 1,
+      maxMissileId: 1,
+      items: [],
+      outfits: [],
+      effects: [effect],
+      missiles: [missile]
+    }
+
+    const buffer = writeDat(data, version, features)
+    const result = readDat(buffer, version, features, defaultDuration)
+
+    expect(result.effects).toHaveLength(1)
+    expect(result.effects[0].frameGroups[0]?.spriteIndex).toEqual([0])
+    expect(result.missiles).toHaveLength(1)
+    expect(result.missiles[0].frameGroups[0]?.spriteIndex).toEqual(new Array(9).fill(0))
+  })
+
+  it('does not write animation metadata for single-frame groups with stale animation flags', () => {
+    const features = createClientFeatures(true, true, true, true)
+    const version = 1098
+
+    const item = createThingType()
+    item.id = 100
+    item.category = TC.ITEM
+    item.isGround = true
+    item.groundSpeed = 150
+
+    const frameGroup = createFrameGroup()
+    frameGroup.frames = 1
+    frameGroup.isAnimation = true
+    frameGroup.animationMode = 1
+    frameGroup.loopCount = 5
+    frameGroup.startFrame = 0
+    frameGroup.frameDurations = [createFrameDuration(100, 200)]
+    frameGroup.spriteIndex = [77]
+    setThingFrameGroup(item, 0, frameGroup)
+
+    const data = {
+      signature: 0x12345678,
+      maxItemId: 100,
+      maxOutfitId: 0,
+      maxEffectId: 0,
+      maxMissileId: 0,
+      items: [item],
+      outfits: [],
+      effects: [],
+      missiles: []
+    }
+
+    const buffer = writeDat(data, version, features)
+    const result = readDat(buffer, version, features, defaultDuration)
+
+    expect(result.items).toHaveLength(1)
+    expect(result.items[0].frameGroups[0]?.frames).toBe(1)
+    expect(result.items[0].frameGroups[0]?.spriteIndex).toEqual([77])
+  })
 })

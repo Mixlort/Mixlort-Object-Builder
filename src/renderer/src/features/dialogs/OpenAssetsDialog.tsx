@@ -19,6 +19,7 @@ import {
 import { SPRITE_DIMENSIONS } from '../../data/sprite-dimensions'
 import { ATTRIBUTE_SERVERS, DEFAULT_ATTRIBUTE_SERVER } from '../../data/attribute-servers'
 import { findVersionBySignatures } from '../../data/versions'
+import { parseOtfi } from '../../services/otfi'
 import { FeatureFlagsGroup } from './FeatureFlagsGroup'
 import { useFeatureFlags, applyVersionDefaults } from './useFeatureFlags'
 import type { Version } from '../../types/version'
@@ -201,7 +202,44 @@ export function OpenAssetsDialog({
 
         setClientInfo(info)
 
-        if (version) {
+        if (discovery.otfiFile) {
+          const otfiContent = await window.api.file.readText(discovery.otfiFile)
+          const otfiData = parseOtfi(otfiContent)
+
+          if (otfiData) {
+            setFlags({
+              extended: otfiData.features.extended,
+              transparency: otfiData.features.transparency,
+              improvedAnimations: otfiData.features.improvedAnimations,
+              frameGroups: otfiData.features.frameGroups
+            })
+
+            if (otfiData.features.attributeServer) {
+              setSelectedAttributeServer(otfiData.features.attributeServer)
+            }
+
+            const dimensionIndex = SPRITE_DIMENSIONS.findIndex(
+              (dimension) =>
+                dimension.size === otfiData.spriteSize &&
+                dimension.dataSize === otfiData.spriteDataSize
+            )
+            if (dimensionIndex >= 0) {
+              setSelectedDimensionIndex(String(dimensionIndex))
+            }
+          } else if (version) {
+            setFlags(
+              applyVersionDefaults(
+                {
+                  extended: false,
+                  transparency: defaultTransparency,
+                  improvedAnimations: false,
+                  frameGroups: false
+                },
+                version.value
+              )
+            )
+          }
+        } else if (version) {
           setFlags(
             applyVersionDefaults(
               {

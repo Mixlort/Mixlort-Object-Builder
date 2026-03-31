@@ -309,6 +309,17 @@ describe('Things actions', () => {
     expect(useAppStore.getState().things.items[1].id).toBe(101)
   })
 
+  it('addThing normalizes category and keeps the array sorted by id', () => {
+    useAppStore.getState().setThings(ThingCategory.MISSILE, [makeThing(2, ThingCategory.MISSILE)])
+
+    const wrongCategory = makeThing(1, ThingCategory.ITEM)
+    useAppStore.getState().addThing(ThingCategory.MISSILE, wrongCategory)
+
+    const missiles = useAppStore.getState().things.missiles
+    expect(missiles.map((thing) => thing.id)).toEqual([1, 2])
+    expect(missiles[0].category).toBe(ThingCategory.MISSILE)
+  })
+
   it('updateThing replaces a thing by ID', () => {
     useAppStore.getState().setThings(ThingCategory.ITEM, [makeThing(100), makeThing(101)])
 
@@ -322,6 +333,17 @@ describe('Things actions', () => {
     expect(items[1].groundSpeed).toBe(150)
     // First item unchanged
     expect(items[0].isGround).toBe(false)
+  })
+
+  it('updateThing normalizes the target id and category', () => {
+    useAppStore.getState().setThings(ThingCategory.EFFECT, [makeThing(1, ThingCategory.EFFECT)])
+
+    const updated = makeThing(999, ThingCategory.ITEM)
+    useAppStore.getState().updateThing(ThingCategory.EFFECT, 1, updated)
+
+    const effects = useAppStore.getState().things.effects
+    expect(effects[0].id).toBe(1)
+    expect(effects[0].category).toBe(ThingCategory.EFFECT)
   })
 
   it('updateThing does nothing if ID not found', () => {

@@ -30,11 +30,9 @@ import {
   ThingCategory,
   type ThingType,
   type ThingData,
-  createThingType,
   createThing,
   cloneThingType,
   cloneThingData,
-  createFrameGroup,
   copyThingProperties,
   copyThingPatterns,
   ClipboardAction,
@@ -1166,12 +1164,14 @@ export function ThingListPanel({
           disabled={!isLoaded}
           onClick={() => {
             if (!clientInfo) return
-            const newThing = createThingType()
             const allThings = categoryThings
             const maxId = allThings.length > 0 ? allThings[allThings.length - 1].id : 0
-            newThing.id = maxId + 1
-            const fg = createFrameGroup()
-            newThing.frameGroups = [fg]
+            const newThing = createThing(
+              maxId + 1,
+              currentCategory,
+              clientInfo.features.frameGroups,
+              0
+            )
             addThing(currentCategory, newThing)
             selectThing(newThing.id)
           }}

@@ -523,6 +523,7 @@ describe('ThingListPanel', () => {
       expect(useAppStore.getState().things.items).toHaveLength(4)
       expect(useAppStore.getState().getThingById(ThingCategory.ITEM, 104)).toBeUndefined()
     })
+
   })
 
   // -----------------------------------------------------------------------
