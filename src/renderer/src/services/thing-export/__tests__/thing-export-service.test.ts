@@ -29,17 +29,17 @@ describe('thing-export-service', () => {
         effects,
         missiles: []
       },
-      effectIdFilterEnabled: true,
-      effectIdFilterInput: '1, 3, 10-12'
+      idFilterEnabled: true,
+      idFilterInput: '1, 3, 10-12'
     })
 
     expect(plan.entries.map((e) => e.sourceId)).toEqual([1, 3, 10, 11, 12])
     expect(plan.entries.map((e) => e.exportId)).toEqual([1, 2, 3, 4, 5])
-    expect(plan.effectsIdMap).toEqual({
+    expect(plan.idMap).toEqual({
       oldToNew: { '1': 1, '3': 2, '10': 3, '11': 4, '12': 5 },
       newToOld: { '1': 1, '2': 3, '3': 10, '4': 11, '5': 12 }
     })
-    expect(plan.missingEffectIds).toEqual([])
+    expect(plan.missingSourceIds).toEqual([])
     expect(plan.filterApplied).toBe(true)
   })
 
@@ -57,13 +57,13 @@ describe('thing-export-service', () => {
         ],
         missiles: []
       },
-      effectIdFilterEnabled: true,
-      effectIdFilterInput: '1,3,9'
+      idFilterEnabled: true,
+      idFilterInput: '1,3,9'
     })
 
     expect(plan.entries.map((e) => e.sourceId)).toEqual([1, 3, 9])
     expect(plan.entries.map((e) => e.exportId)).toEqual([1, 2, 3])
-    expect(plan.missingEffectIds).toEqual([9])
+    expect(plan.missingSourceIds).toEqual([9])
     expect(getThingFrameGroup(plan.entries[2].thing, 0)?.spriteIndex).toEqual([0])
   })
 
@@ -84,14 +84,39 @@ describe('thing-export-service', () => {
         effects,
         missiles: []
       },
-      effectIdFilterEnabled: false,
-      effectIdFilterInput: '1-10'
+      idFilterEnabled: false,
+      idFilterInput: '1-10'
     })
 
     expect(plan.entries.map((e) => e.sourceId)).toEqual([2, 4])
     expect(plan.entries.map((e) => e.exportId)).toEqual([2, 4])
-    expect(plan.effectsIdMap).toBeNull()
+    expect(plan.idMap).toBeNull()
     expect(plan.filterApplied).toBe(false)
+  })
+
+  it('creates filtered missiles plan with contiguous reindex and id map', () => {
+    const missiles = Array.from({ length: 20 }, (_, i) => makeThing(i + 1, ThingCategory.MISSILE))
+
+    const plan = createThingExportPlan({
+      category: ThingCategory.MISSILE,
+      selectedThingIds: [],
+      things: {
+        items: [],
+        outfits: [],
+        effects: [],
+        missiles
+      },
+      idFilterEnabled: true,
+      idFilterInput: '1, 7, 10-12'
+    })
+
+    expect(plan.entries.map((e) => e.sourceId)).toEqual([1, 7, 10, 11, 12])
+    expect(plan.entries.map((e) => e.exportId)).toEqual([1, 2, 3, 4, 5])
+    expect(plan.idMap).toEqual({
+      oldToNew: { '1': 1, '7': 2, '10': 3, '11': 4, '12': 5 },
+      newToOld: { '1': 1, '2': 7, '3': 10, '4': 11, '5': 12 }
+    })
+    expect(plan.missingSourceIds).toEqual([])
   })
 
   it('writes export files and effects-id-map.json when map exists', async () => {
@@ -107,8 +132,8 @@ describe('thing-export-service', () => {
         ],
         missiles: []
       },
-      effectIdFilterEnabled: true,
-      effectIdFilterInput: '1,3'
+      idFilterEnabled: true,
+      idFilterInput: '1,3'
     })
 
     const writeBinary = vi.fn().mockResolvedValue(undefined)
@@ -120,7 +145,7 @@ describe('thing-export-service', () => {
       directory: '/tmp/out',
       fileNamePrefix: 'effect',
       format: ImageFormat.PNG,
-      effectUseOriginalIdsInFileNames: false,
+      useOriginalIdsInFileNames: false,
       encodeThing,
       writeBinary,
       writeText
@@ -135,6 +160,45 @@ describe('thing-export-service', () => {
     expect(result.mapFilePath).toBe('/tmp/out/effects-id-map.json')
   })
 
+  it('writes export files and missiles-id-map.json when missiles map exists', async () => {
+    const plan = createThingExportPlan({
+      category: ThingCategory.MISSILE,
+      selectedThingIds: [],
+      things: {
+        items: [],
+        outfits: [],
+        effects: [],
+        missiles: [
+          makeThing(4, ThingCategory.MISSILE),
+          makeThing(9, ThingCategory.MISSILE)
+        ]
+      },
+      idFilterEnabled: true,
+      idFilterInput: '4,9'
+    })
+
+    const writeBinary = vi.fn().mockResolvedValue(undefined)
+    const writeText = vi.fn().mockResolvedValue(undefined)
+    const encodeThing = vi.fn().mockResolvedValue(new Uint8Array([1, 2, 3]).buffer)
+
+    const result = await exportThingPlanToFiles({
+      plan,
+      directory: '/tmp/out',
+      fileNamePrefix: 'missile',
+      format: ImageFormat.PNG,
+      useOriginalIdsInFileNames: false,
+      encodeThing,
+      writeBinary,
+      writeText
+    })
+
+    expect(result.exportedCount).toBe(2)
+    expect(writeBinary).toHaveBeenNthCalledWith(1, '/tmp/out/1.png', expect.any(ArrayBuffer))
+    expect(writeBinary).toHaveBeenNthCalledWith(2, '/tmp/out/2.png', expect.any(ArrayBuffer))
+    expect(writeText).toHaveBeenCalledWith('/tmp/out/missiles-id-map.json', expect.any(String))
+    expect(result.mapFilePath).toBe('/tmp/out/missiles-id-map.json')
+  })
+
   it('uses exported effect ids as file names even without filter', async () => {
     const plan = createThingExportPlan({
       category: ThingCategory.EFFECT,
@@ -145,8 +209,8 @@ describe('thing-export-service', () => {
         effects: [makeThing(7, ThingCategory.EFFECT)],
         missiles: []
       },
-      effectIdFilterEnabled: false,
-      effectIdFilterInput: ''
+      idFilterEnabled: false,
+      idFilterInput: ''
     })
 
     const writeBinary = vi.fn().mockResolvedValue(undefined)
@@ -158,7 +222,7 @@ describe('thing-export-service', () => {
       directory: '/tmp/out',
       fileNamePrefix: 'ignored-for-effects',
       format: ImageFormat.BMP,
-      effectUseOriginalIdsInFileNames: false,
+      useOriginalIdsInFileNames: false,
       encodeThing,
       writeBinary,
       writeText
@@ -182,8 +246,8 @@ describe('thing-export-service', () => {
         ],
         missiles: []
       },
-      effectIdFilterEnabled: true,
-      effectIdFilterInput: '1,7,9'
+      idFilterEnabled: true,
+      idFilterInput: '1,7,9'
     })
 
     const writeBinary = vi.fn().mockResolvedValue(undefined)
@@ -195,7 +259,7 @@ describe('thing-export-service', () => {
       directory: '/tmp/out',
       fileNamePrefix: 'ignored-for-effects',
       format: ImageFormat.PNG,
-      effectUseOriginalIdsInFileNames: true,
+      useOriginalIdsInFileNames: true,
       encodeThing,
       writeBinary,
       writeText
@@ -205,6 +269,45 @@ describe('thing-export-service', () => {
     expect(writeBinary).toHaveBeenNthCalledWith(2, '/tmp/out/7.png', expect.any(ArrayBuffer))
     expect(writeBinary).toHaveBeenNthCalledWith(3, '/tmp/out/9.png', expect.any(ArrayBuffer))
     expect(writeText).toHaveBeenCalledWith('/tmp/out/effects-id-map.json', expect.any(String))
+  })
+
+  it('can use original missile ids in file names when missile filter is active', async () => {
+    const plan = createThingExportPlan({
+      category: ThingCategory.MISSILE,
+      selectedThingIds: [],
+      things: {
+        items: [],
+        outfits: [],
+        effects: [],
+        missiles: [
+          makeThing(1, ThingCategory.MISSILE),
+          makeThing(7, ThingCategory.MISSILE),
+          makeThing(9, ThingCategory.MISSILE)
+        ]
+      },
+      idFilterEnabled: true,
+      idFilterInput: '1,7,9'
+    })
+
+    const writeBinary = vi.fn().mockResolvedValue(undefined)
+    const writeText = vi.fn().mockResolvedValue(undefined)
+    const encodeThing = vi.fn().mockResolvedValue(new Uint8Array([1, 2, 3]).buffer)
+
+    await exportThingPlanToFiles({
+      plan,
+      directory: '/tmp/out',
+      fileNamePrefix: 'ignored-for-missiles',
+      format: ImageFormat.PNG,
+      useOriginalIdsInFileNames: true,
+      encodeThing,
+      writeBinary,
+      writeText
+    })
+
+    expect(writeBinary).toHaveBeenNthCalledWith(1, '/tmp/out/1.png', expect.any(ArrayBuffer))
+    expect(writeBinary).toHaveBeenNthCalledWith(2, '/tmp/out/7.png', expect.any(ArrayBuffer))
+    expect(writeBinary).toHaveBeenNthCalledWith(3, '/tmp/out/9.png', expect.any(ArrayBuffer))
+    expect(writeText).toHaveBeenCalledWith('/tmp/out/missiles-id-map.json', expect.any(String))
   })
 
   it('does not create map file when no effects filter map exists', async () => {
@@ -217,8 +320,8 @@ describe('thing-export-service', () => {
         effects: [],
         missiles: []
       },
-      effectIdFilterEnabled: true,
-      effectIdFilterInput: '1,2'
+      idFilterEnabled: true,
+      idFilterInput: '1,2'
     })
 
     const writeBinary = vi.fn().mockResolvedValue(undefined)
@@ -230,7 +333,7 @@ describe('thing-export-service', () => {
       directory: '/tmp/out',
       fileNamePrefix: 'item',
       format: ImageFormat.BMP,
-      effectUseOriginalIdsInFileNames: true,
+      useOriginalIdsInFileNames: true,
       encodeThing,
       writeBinary,
       writeText
@@ -252,8 +355,8 @@ describe('thing-export-service', () => {
         effects: [],
         missiles: []
       },
-      effectIdFilterEnabled: false,
-      effectIdFilterInput: ''
+      idFilterEnabled: false,
+      idFilterInput: ''
     })
 
     const writeBinary = vi.fn().mockResolvedValue(undefined)

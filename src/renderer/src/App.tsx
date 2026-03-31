@@ -196,6 +196,10 @@ function joinPath(directory: string, fileName: string): string {
   return `${directory.replace(/[\\/]+$/u, '')}/${fileName}`
 }
 
+function getFilteredExportCategoryLabel(category: ThingCategory): string {
+  return category === ThingCategory.MISSILE ? 'Missiles' : 'Effects'
+}
+
 function featurePayload(features: ClientFeatures): ClientFeatures {
   return {
     extended: features.extended,
@@ -1106,21 +1110,22 @@ export function App(): React.JSX.Element {
                 ? [selectedThingId]
                 : [],
           things: state.things,
-          effectIdFilterEnabled: result.effectIdFilterEnabled,
-          effectIdFilterInput: result.effectIdFilterInput
+          idFilterEnabled: result.idFilterEnabled,
+          idFilterInput: result.idFilterInput
         })
 
-      addLog('info', `Export plan: ${plan.entries.length} object(s)`)
+        addLog('info', `Export plan: ${plan.entries.length} object(s)`)
 
         if (plan.entries.length === 0) {
           addLog('warning', 'No objects selected for export')
           return
         }
 
-        if (plan.missingEffectIds.length > 0) {
+        if (plan.missingSourceIds.length > 0) {
+          const categoryLabel = getFilteredExportCategoryLabel(plan.category)
           addLog(
             'warning',
-            `Effects IDs not found: ${plan.missingEffectIds.join(', ')} (exporting empty placeholders)`
+            `${categoryLabel} IDs not found: ${plan.missingSourceIds.join(', ')} (exporting empty placeholders)`
           )
         }
 
@@ -1220,7 +1225,7 @@ export function App(): React.JSX.Element {
           directory: result.directory,
           fileNamePrefix: result.fileName,
           format: result.format,
-          effectUseOriginalIdsInFileNames: result.effectUseOriginalIdsInFileNames,
+          useOriginalIdsInFileNames: result.useOriginalIdsInFileNames,
           encodeThing,
           writeBinary: (filePath, data) => window.api.file.writeBinary(filePath, data),
           writeText: (filePath, text) => window.api.file.writeText(filePath, text)
@@ -1228,7 +1233,10 @@ export function App(): React.JSX.Element {
 
         addLog('info', `Export complete: ${exportResult.exportedCount} object(s)`)
         if (exportResult.mapFilePath) {
-          addLog('info', `Effects ID map generated: ${exportResult.mapFilePath}`)
+          addLog(
+            'info',
+            `${getFilteredExportCategoryLabel(plan.category)} ID map generated: ${exportResult.mapFilePath}`
+          )
         }
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err)
@@ -1699,6 +1707,7 @@ export function App(): React.JSX.Element {
         onClose={closeDialog}
         onConfirm={handleExportConfirm}
         enableObdFormat={true}
+        currentCategory={currentCategory}
         currentVersion={
           clientInfo
             ? {

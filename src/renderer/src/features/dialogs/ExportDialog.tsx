@@ -24,6 +24,7 @@ import { OTFormat } from '../../types/project'
 import { VERSIONS } from '../../data'
 import type { Version } from '../../types/version'
 import type { ThingExportFormat } from '../../types/project'
+import { ThingCategory } from '../../types'
 import { parseIdList } from '../../utils'
 
 // ---------------------------------------------------------------------------
@@ -38,9 +39,9 @@ export interface ExportDialogResult {
   jpegQuality: number
   version: Version | null
   obdVersion: number
-  effectIdFilterEnabled: boolean
-  effectIdFilterInput: string
-  effectUseOriginalIdsInFileNames: boolean
+  idFilterEnabled: boolean
+  idFilterInput: string
+  useOriginalIdsInFileNames: boolean
 }
 
 export interface ExportDialogProps {
@@ -49,6 +50,7 @@ export interface ExportDialogProps {
   onConfirm: (result: ExportDialogResult) => void
   enableObdFormat?: boolean
   currentVersion?: Version | null
+  currentCategory?: import('../../types').ThingCategory
   defaultFormat?: ThingExportFormat
   defaultFileName?: string
 }
@@ -62,6 +64,14 @@ const OBD_VERSION_OPTIONS = [
   { value: String(OBDVersion.VERSION_3), label: 'OBD v3.0' }
 ]
 
+function supportsCategoryIdFilter(category: import('../../types').ThingCategory): boolean {
+  return category === ThingCategory.EFFECT || category === ThingCategory.MISSILE
+}
+
+function getCategoryFilterLabel(category: import('../../types').ThingCategory): string {
+  return category === ThingCategory.MISSILE ? 'missiles' : 'effects'
+}
+
 // ---------------------------------------------------------------------------
 // ExportDialog
 // ---------------------------------------------------------------------------
@@ -72,6 +82,7 @@ export function ExportDialog({
   onConfirm,
   enableObdFormat = true,
   currentVersion = null,
+  currentCategory = ThingCategory.EFFECT,
   defaultFormat = ImageFormat.PNG,
   defaultFileName = ''
 }: ExportDialogProps): React.JSX.Element {
@@ -83,9 +94,9 @@ export function ExportDialog({
   const [jpegQuality, setJpegQuality] = useState(100)
   const [selectedVersion, setSelectedVersion] = useState<Version | null>(currentVersion)
   const [obdVersion, setObdVersion] = useState(OBDVersion.VERSION_3)
-  const [effectIdFilterEnabled, setEffectIdFilterEnabled] = useState(false)
-  const [effectIdFilterInput, setEffectIdFilterInput] = useState('')
-  const [effectUseOriginalIdsInFileNames, setEffectUseOriginalIdsInFileNames] = useState(false)
+  const [idFilterEnabled, setIdFilterEnabled] = useState(false)
+  const [idFilterInput, setIdFilterInput] = useState('')
+  const [useOriginalIdsInFileNames, setUseOriginalIdsInFileNames] = useState(false)
 
   // Reset on open (render-time state adjustment)
   const [prevOpen, setPrevOpen] = useState(false)
@@ -96,9 +107,9 @@ export function ExportDialog({
     setJpegQuality(100)
     setTransparentBackground(false)
     setObdVersion(OBDVersion.VERSION_3)
-    setEffectIdFilterEnabled(false)
-    setEffectIdFilterInput('')
-    setEffectUseOriginalIdsInFileNames(false)
+    setIdFilterEnabled(false)
+    setIdFilterInput('')
+    setUseOriginalIdsInFileNames(false)
   }
   if (open !== prevOpen) {
     setPrevOpen(open)
@@ -121,13 +132,16 @@ export function ExportDialog({
     setSelectedVersion(ver)
   }, [])
 
-  const effectIdFilterError = (() => {
-    if (!effectIdFilterEnabled || effectIdFilterInput.trim().length === 0) {
+  const showCategoryIdFilter = supportsCategoryIdFilter(currentCategory)
+  const categoryFilterLabel = getCategoryFilterLabel(currentCategory)
+
+  const idFilterError = (() => {
+    if (!showCategoryIdFilter || !idFilterEnabled || idFilterInput.trim().length === 0) {
       return null
     }
 
     try {
-      parseIdList(effectIdFilterInput)
+      parseIdList(idFilterInput)
       return null
     } catch (error) {
       return error instanceof Error ? error.message : String(error)
@@ -143,9 +157,9 @@ export function ExportDialog({
       jpegQuality,
       version: format === OTFormat.OBD ? selectedVersion : null,
       obdVersion: format === OTFormat.OBD ? obdVersion : 0,
-      effectIdFilterEnabled,
-      effectIdFilterInput,
-      effectUseOriginalIdsInFileNames
+      idFilterEnabled: showCategoryIdFilter && idFilterEnabled,
+      idFilterInput,
+      useOriginalIdsInFileNames: showCategoryIdFilter && useOriginalIdsInFileNames
     })
     onClose()
   }, [
@@ -156,9 +170,10 @@ export function ExportDialog({
     jpegQuality,
     selectedVersion,
     obdVersion,
-    effectIdFilterEnabled,
-    effectIdFilterInput,
-    effectUseOriginalIdsInFileNames,
+    showCategoryIdFilter,
+    idFilterEnabled,
+    idFilterInput,
+    useOriginalIdsInFileNames,
     onConfirm,
     onClose
   ])
@@ -166,7 +181,7 @@ export function ExportDialog({
   const isValid =
     directory.length > 0 &&
     (format !== OTFormat.OBD || selectedVersion !== null) &&
-    !effectIdFilterError
+    !idFilterError
 
   const versionOptions = VERSIONS.map((v) => ({ value: v.valueStr, label: `v${v.valueStr}` }))
 
@@ -291,37 +306,36 @@ export function ExportDialog({
           )}
         </FieldGroup>
 
-        {/* Effects filter */}
-        <FieldGroup label="Effects Filter">
-          <div className="flex flex-col gap-2">
-            <CheckboxField
-              label="Exportar IDs específicos (effects)"
-              checked={effectIdFilterEnabled}
-              onChange={setEffectIdFilterEnabled}
-            />
+        {showCategoryIdFilter && (
+          <FieldGroup label={`${categoryFilterLabel[0].toUpperCase()}${categoryFilterLabel.slice(1)} Filter`}>
+            <div className="flex flex-col gap-2">
+              <CheckboxField
+                label={`Exportar IDs específicos (${categoryFilterLabel})`}
+                checked={idFilterEnabled}
+                onChange={setIdFilterEnabled}
+              />
 
-            <span className="text-xs text-text-secondary">Lista de IDs</span>
+              <span className="text-xs text-text-secondary">Lista de IDs</span>
 
-            <textarea
-              className="min-h-[78px] w-full resize-y rounded-lg border border-border bg-bg-input px-3 py-2 text-xs text-text-primary outline-none transition-colors focus:border-accent focus:ring-1 focus:ring-accent disabled:cursor-not-allowed disabled:opacity-38"
-              value={effectIdFilterInput}
-              onChange={(event) => setEffectIdFilterInput(event.target.value)}
-              placeholder="Ex: 1, 5, 10-15"
-              disabled={!effectIdFilterEnabled}
-            />
+              <textarea
+                className="min-h-[78px] w-full resize-y rounded-lg border border-border bg-bg-input px-3 py-2 text-xs text-text-primary outline-none transition-colors focus:border-accent focus:ring-1 focus:ring-accent disabled:cursor-not-allowed disabled:opacity-38"
+                value={idFilterInput}
+                onChange={(event) => setIdFilterInput(event.target.value)}
+                placeholder="Ex: 1, 5, 10-15"
+                disabled={!idFilterEnabled}
+              />
 
-            <CheckboxField
-              label="Usar IDs originais no nome dos arquivos"
-              checked={effectUseOriginalIdsInFileNames}
-              onChange={setEffectUseOriginalIdsInFileNames}
-              disabled={!effectIdFilterEnabled}
-            />
+              <CheckboxField
+                label="Usar IDs originais no nome dos arquivos"
+                checked={useOriginalIdsInFileNames}
+                onChange={setUseOriginalIdsInFileNames}
+                disabled={!idFilterEnabled}
+              />
 
-            {effectIdFilterEnabled && effectIdFilterError && (
-              <p className="text-xs text-error">{effectIdFilterError}</p>
-            )}
-          </div>
-        </FieldGroup>
+              {idFilterEnabled && idFilterError && <p className="text-xs text-error">{idFilterError}</p>}
+            </div>
+          </FieldGroup>
+        )}
       </div>
     </Modal>
   )

@@ -17,15 +17,16 @@ export interface ThingExportEntry {
   thing: ThingType
 }
 
-export interface EffectsIdMap {
+export interface ThingIdMap {
   oldToNew: Record<string, number>
   newToOld: Record<string, number>
 }
 
 export interface ThingExportPlan {
+  category: ThingCategory
   entries: ThingExportEntry[]
-  effectsIdMap: EffectsIdMap | null
-  missingEffectIds: number[]
+  idMap: ThingIdMap | null
+  missingSourceIds: number[]
   filterApplied: boolean
 }
 
@@ -33,8 +34,8 @@ export interface CreateThingExportPlanParams {
   category: ThingCategory
   selectedThingIds: number[]
   things: ThingExportCollections
-  effectIdFilterEnabled: boolean
-  effectIdFilterInput: string
+  idFilterEnabled: boolean
+  idFilterInput: string
 }
 
 export interface ExportThingPlanParams {
@@ -42,7 +43,7 @@ export interface ExportThingPlanParams {
   directory: string
   fileNamePrefix: string
   format: ThingExportFormat
-  effectUseOriginalIdsInFileNames?: boolean
+  useOriginalIdsInFileNames?: boolean
   encodeThing: (entry: ThingExportEntry) => Promise<ArrayBuffer>
   writeBinary: (path: string, data: ArrayBuffer) => Promise<void>
   writeText: (path: string, text: string) => Promise<void>
@@ -72,7 +73,11 @@ function normalizeSelectedThings(things: ThingType[], selectedIds: number[]): Th
   return things.filter((thing) => selected.has(thing.id)).sort((a, b) => a.id - b.id)
 }
 
-function makeEffectsIdMap(entries: ThingExportEntry[]): EffectsIdMap {
+function supportsCategoryIdFilter(category: ThingCategory): boolean {
+  return category === TC.EFFECT || category === TC.MISSILE
+}
+
+function makeThingIdMap(entries: ThingExportEntry[]): ThingIdMap {
   const oldToNew: Record<string, number> = {}
   const newToOld: Record<string, number> = {}
 
@@ -117,11 +122,17 @@ function getExportFileName(
   entry: ThingExportEntry,
   extension: string,
   fileNamePrefix: string,
-  effectUseOriginalIdsInFileNames: boolean
+  useOriginalIdsInFileNames: boolean,
+  useFilteredCategoryIdsInFileNames: boolean
 ): string {
   if (entry.thing.category === TC.EFFECT) {
-    const effectFileId = effectUseOriginalIdsInFileNames ? entry.sourceId : entry.exportId
+    const effectFileId = useOriginalIdsInFileNames ? entry.sourceId : entry.exportId
     return `${effectFileId}.${extension}`
+  }
+
+  if (entry.thing.category === TC.MISSILE && useFilteredCategoryIdsInFileNames) {
+    const missileFileId = useOriginalIdsInFileNames ? entry.sourceId : entry.exportId
+    return `${missileFileId}.${extension}`
   }
 
   if (fileNamePrefix.trim().length === 0) {
@@ -131,49 +142,53 @@ function getExportFileName(
   return `${fileNamePrefix}_${entry.exportId}.${extension}`
 }
 
+function getIdMapFileName(category: ThingCategory): string {
+  return category === TC.MISSILE ? 'missiles-id-map.json' : 'effects-id-map.json'
+}
+
 export function createThingExportPlan(params: CreateThingExportPlanParams): ThingExportPlan {
-  const { category, selectedThingIds, things, effectIdFilterEnabled, effectIdFilterInput } = params
+  const { category, selectedThingIds, things, idFilterEnabled, idFilterInput } = params
   const categoryThings = getThingsByCategory(things, category)
 
-  if (category !== TC.EFFECT || !effectIdFilterEnabled) {
+  if (!supportsCategoryIdFilter(category) || !idFilterEnabled) {
     const selectedThings = normalizeSelectedThings(categoryThings, selectedThingIds)
     return {
+      category,
       entries: selectedThings.map((thing) => ({
         sourceId: thing.id,
         exportId: thing.id,
         thing
       })),
-      effectsIdMap: null,
-      missingEffectIds: [],
+      idMap: null,
+      missingSourceIds: [],
       filterApplied: false
     }
   }
 
-  const effectsById = new Map<number, ThingType>()
-  for (const effect of things.effects) {
-    effectsById.set(effect.id, effect)
+  const thingsById = new Map<number, ThingType>()
+  for (const thing of categoryThings) {
+    thingsById.set(thing.id, thing)
   }
 
-  const parsedIds =
-    effectIdFilterInput.trim().length === 0 ? [] : parseIdList(effectIdFilterInput.trim())
-  const sourceEffects =
+  const parsedIds = idFilterInput.trim().length === 0 ? [] : parseIdList(idFilterInput.trim())
+  const sourceThings =
     parsedIds.length === 0
-      ? [...things.effects].sort((a, b) => a.id - b.id)
-      : parsedIds.map((id) => effectsById.get(id) ?? createEmptyThing(TC.EFFECT, id))
+      ? [...categoryThings].sort((a, b) => a.id - b.id)
+      : parsedIds.map((id) => thingsById.get(id) ?? createEmptyThing(category, id))
 
-  const missingEffectIds =
-    parsedIds.length === 0 ? [] : parsedIds.filter((id) => !effectsById.has(id))
+  const missingSourceIds = parsedIds.length === 0 ? [] : parsedIds.filter((id) => !thingsById.has(id))
 
-  const entries = sourceEffects.map((thing, index) => ({
+  const entries = sourceThings.map((thing, index) => ({
     sourceId: parsedIds.length === 0 ? thing.id : parsedIds[index],
     exportId: index + 1,
     thing
   }))
 
   return {
+    category,
     entries,
-    effectsIdMap: makeEffectsIdMap(entries),
-    missingEffectIds,
+    idMap: makeThingIdMap(entries),
+    missingSourceIds,
     filterApplied: true
   }
 }
@@ -186,7 +201,7 @@ export async function exportThingPlanToFiles(
     directory,
     fileNamePrefix,
     format,
-    effectUseOriginalIdsInFileNames = false,
+    useOriginalIdsInFileNames = false,
     encodeThing,
     writeBinary,
     writeText
@@ -194,13 +209,16 @@ export async function exportThingPlanToFiles(
 
   const extension = getExportExtension(format)
   const writtenFiles: string[] = []
+  const useFilteredCategoryIdsInFileNames =
+    plan.filterApplied && supportsCategoryIdFilter(plan.category)
 
   for (const entry of plan.entries) {
     const fileName = getExportFileName(
       entry,
       extension,
       fileNamePrefix,
-      effectUseOriginalIdsInFileNames
+      useOriginalIdsInFileNames,
+      useFilteredCategoryIdsInFileNames
     )
     const fullPath = joinPath(directory, fileName)
     const data = await encodeThing(entry)
@@ -209,9 +227,9 @@ export async function exportThingPlanToFiles(
   }
 
   let mapFilePath: string | null = null
-  if (plan.effectsIdMap) {
-    mapFilePath = joinPath(directory, 'effects-id-map.json')
-    await writeText(mapFilePath, JSON.stringify(plan.effectsIdMap, null, 2))
+  if (plan.idMap) {
+    mapFilePath = joinPath(directory, getIdMapFileName(plan.category))
+    await writeText(mapFilePath, JSON.stringify(plan.idMap, null, 2))
     writtenFiles.push(mapFilePath)
   }
 

@@ -8,6 +8,7 @@ import React from 'react'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, fireEvent } from '@testing-library/react'
 import { ExportDialog } from '../ExportDialog'
+import { ThingCategory } from '../../../types'
 import { ImageFormat } from '../../../types/project'
 
 // ---------------------------------------------------------------------------
@@ -39,7 +40,8 @@ function renderDialog(props: Partial<React.ComponentProps<typeof ExportDialog>> 
   const defaultProps = {
     open: true,
     onClose: vi.fn(),
-    onConfirm: vi.fn()
+    onConfirm: vi.fn(),
+    currentCategory: ThingCategory.EFFECT
   }
   return render(<ExportDialog {...defaultProps} {...props} />)
 }
@@ -57,16 +59,16 @@ function setFileName(value: string) {
   fireEvent.change(input, { target: { value } })
 }
 
-function setEffectIdList(value: string) {
+function setIdList(value: string) {
   const input = screen.getByPlaceholderText('Ex: 1, 5, 10-15')
   fireEvent.change(input, { target: { value } })
 }
 
-function toggleEffectIdFilter() {
-  fireEvent.click(screen.getByLabelText('Exportar IDs específicos (effects)'))
+function toggleIdFilter(categoryLabel = 'effects') {
+  fireEvent.click(screen.getByLabelText(`Exportar IDs específicos (${categoryLabel})`))
 }
 
-function toggleOriginalEffectIdsInFileNames() {
+function toggleOriginalIdsInFileNames() {
   fireEvent.click(screen.getByLabelText('Usar IDs originais no nome dos arquivos'))
 }
 
@@ -122,6 +124,18 @@ describe('ExportDialog', () => {
     expect(screen.getByLabelText('Exportar IDs específicos (effects)')).toBeInTheDocument()
     expect(screen.getByPlaceholderText('Ex: 1, 5, 10-15')).toBeDisabled()
     expect(screen.getByLabelText('Usar IDs originais no nome dos arquivos')).toBeDisabled()
+  })
+
+  it('renders missiles filter controls when current tab is missiles', () => {
+    renderDialog({ currentCategory: ThingCategory.MISSILE })
+    expect(screen.getByLabelText('Exportar IDs específicos (missiles)')).toBeInTheDocument()
+    expect(screen.queryByLabelText('Exportar IDs específicos (effects)')).not.toBeInTheDocument()
+  })
+
+  it('hides category filter for items', () => {
+    renderDialog({ currentCategory: ThingCategory.ITEM })
+    expect(screen.queryByLabelText(/Exportar IDs específicos/)).not.toBeInTheDocument()
+    expect(screen.queryByPlaceholderText('Ex: 1, 5, 10-15')).not.toBeInTheDocument()
   })
 
   it('PNG is selected by default', () => {
@@ -251,15 +265,15 @@ describe('ExportDialog', () => {
     expect(result.jpegQuality).toBe(100)
     expect(result.version).toBeNull() // null for non-OBD
     expect(result.obdVersion).toBe(0) // 0 for non-OBD
-    expect(result.effectIdFilterEnabled).toBe(false)
-    expect(result.effectIdFilterInput).toBe('')
-    expect(result.effectUseOriginalIdsInFileNames).toBe(false)
+    expect(result.idFilterEnabled).toBe(false)
+    expect(result.idFilterInput).toBe('')
+    expect(result.useOriginalIdsInFileNames).toBe(false)
     expect(onClose).toHaveBeenCalledTimes(1)
   })
 
   it('enables list field when effects filter is checked', () => {
     renderDialog()
-    toggleEffectIdFilter()
+    toggleIdFilter()
     expect(screen.getByPlaceholderText('Ex: 1, 5, 10-15')).not.toBeDisabled()
     expect(screen.getByLabelText('Usar IDs originais no nome dos arquivos')).not.toBeDisabled()
   })
@@ -269,8 +283,8 @@ describe('ExportDialog', () => {
     setFileName('test-file')
     await browseDirectory()
 
-    toggleEffectIdFilter()
-    setEffectIdList('1,abc,3')
+    toggleIdFilter()
+    setIdList('1,abc,3')
 
     expect(screen.getByText('Invalid token "abc"')).toBeInTheDocument()
     const exportBtn = screen.getAllByText('Export')[1]
@@ -282,8 +296,8 @@ describe('ExportDialog', () => {
     setFileName('test-file')
     await browseDirectory()
 
-    toggleEffectIdFilter()
-    setEffectIdList('1, 2 3\n4-6')
+    toggleIdFilter()
+    setIdList('1, 2 3\n4-6')
 
     expect(screen.queryByText(/Invalid token/)).not.toBeInTheDocument()
     const exportBtn = screen.getAllByText('Export')[1]
@@ -296,17 +310,17 @@ describe('ExportDialog', () => {
 
     setFileName('test-file')
     await browseDirectory()
-    toggleEffectIdFilter()
-    setEffectIdList('1, 5, 10-12')
-    toggleOriginalEffectIdsInFileNames()
+    toggleIdFilter()
+    setIdList('1, 5, 10-12')
+    toggleOriginalIdsInFileNames()
 
     const exportBtn = screen.getAllByText('Export')[1]
     fireEvent.click(exportBtn)
 
     const result = onConfirm.mock.calls[0][0]
-    expect(result.effectIdFilterEnabled).toBe(true)
-    expect(result.effectIdFilterInput).toBe('1, 5, 10-12')
-    expect(result.effectUseOriginalIdsInFileNames).toBe(true)
+    expect(result.idFilterEnabled).toBe(true)
+    expect(result.idFilterInput).toBe('1, 5, 10-12')
+    expect(result.useOriginalIdsInFileNames).toBe(true)
   })
 
   it('confirm with JPG format includes jpeg quality', async () => {
