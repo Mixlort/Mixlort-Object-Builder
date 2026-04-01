@@ -1,21 +1,7 @@
 /**
- * Object Viewer dialog — standalone tool for browsing and previewing OBD files
- * or the currently editing object, with direction rotation, animated preview,
- * and zoom controls.
+ * Object Viewer content and wrappers.
  *
- * Ported from legacy AS3: objectview/ObjectViewer.mxml + ThingDataView direction controls.
- *
- * Features:
- * - View currently editing thing or open OBD files from disk
- * - Animated preview with SpriteRenderer
- * - 8-direction controls (N/S/E/W/NE/NW/SE/SW)
- * - Frame group selector (Idle/Walking for outfits)
- * - Playback controls (Play/Pause/Stop, First/Prev/Next/Last)
- * - Zoom slider (1x-5x) + mouse wheel
- * - Background color toggle + color picker
- * - OBD file list with navigation (Previous/Next)
- * - Status info (name, type, client version, OBD version)
- * - Keyboard shortcuts (Ctrl+O, Left/Right arrows)
+ * Supports both the legacy in-app dialog wrapper and the detached BrowserWindow page.
  */
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
@@ -44,29 +30,26 @@ import {
 import { useEditorStore, selectEditingThingData } from '../../stores'
 import { useAnimationStore } from '../../stores'
 import { SpriteRenderer } from '../sprites'
-import { ThingCategory } from '../../types/things'
-import type { ThingData } from '../../types/things'
+import { ThingCategory, type ThingData, cloneThingData } from '../../types'
 import { FrameGroupType as FGT } from '../../types/animation'
 import type { FrameGroupType } from '../../types/animation'
 import { Direction } from '../../types/geometry'
-
-// ---------------------------------------------------------------------------
-// Types
-// ---------------------------------------------------------------------------
 
 export interface ObjectViewerDialogProps {
   open: boolean
   onClose: () => void
 }
 
+interface ObjectViewerContentProps {
+  active: boolean
+  editingThingData: ThingData | null
+  fillWindow?: boolean
+}
+
 interface ObdFileEntry {
   name: string
   path: string
 }
-
-// ---------------------------------------------------------------------------
-// Direction Pad
-// ---------------------------------------------------------------------------
 
 interface DirectionPadProps {
   direction: number
@@ -83,22 +66,18 @@ function DirectionPad({
     dir: number
     label: string
     icon: React.ReactNode
-    row: number
-    col: number
   }> = [
-    { dir: Direction.NORTHWEST, label: 'NW', icon: <IconArrowNW size={12} />, row: 0, col: 0 },
-    { dir: Direction.NORTH, label: 'N', icon: <IconArrowN size={12} />, row: 0, col: 1 },
-    { dir: Direction.NORTHEAST, label: 'NE', icon: <IconArrowNE size={12} />, row: 0, col: 2 },
-    { dir: Direction.WEST, label: 'W', icon: <IconArrowW size={12} />, row: 1, col: 0 },
-    { dir: -1, label: '', icon: null, row: 1, col: 1 },
-    { dir: Direction.EAST, label: 'E', icon: <IconArrowE size={12} />, row: 1, col: 2 },
-    { dir: Direction.SOUTHWEST, label: 'SW', icon: <IconArrowSW size={12} />, row: 2, col: 0 },
-    { dir: Direction.SOUTH, label: 'S', icon: <IconArrowS size={12} />, row: 2, col: 1 },
-    { dir: Direction.SOUTHEAST, label: 'SE', icon: <IconArrowSE size={12} />, row: 2, col: 2 }
+    { dir: Direction.NORTHWEST, label: 'NW', icon: <IconArrowNW size={12} /> },
+    { dir: Direction.NORTH, label: 'N', icon: <IconArrowN size={12} /> },
+    { dir: Direction.NORTHEAST, label: 'NE', icon: <IconArrowNE size={12} /> },
+    { dir: Direction.WEST, label: 'W', icon: <IconArrowW size={12} /> },
+    { dir: -1, label: '', icon: null },
+    { dir: Direction.EAST, label: 'E', icon: <IconArrowE size={12} /> },
+    { dir: Direction.SOUTHWEST, label: 'SW', icon: <IconArrowSW size={12} /> },
+    { dir: Direction.SOUTH, label: 'S', icon: <IconArrowS size={12} /> },
+    { dir: Direction.SOUTHEAST, label: 'SE', icon: <IconArrowSE size={12} /> }
   ]
 
-  // Map Direction enum to patternX index for outfits (4 cardinal)
-  // N=0, E=1, S=2, W=3 — diagonal maps to closest cardinal
   const dirToPatternX = (dir: number): number => {
     switch (dir) {
       case Direction.NORTH:
@@ -139,7 +118,7 @@ function DirectionPad({
                 ? 'bg-accent text-white'
                 : isAvailable
                   ? 'bg-bg-tertiary text-text-primary hover:bg-bg-hover'
-                  : 'bg-bg-primary text-text-muted cursor-not-allowed'
+                  : 'cursor-not-allowed bg-bg-primary text-text-muted'
             }`}
             onClick={() => isAvailable && onDirectionChange(patternX)}
             disabled={!isAvailable}
@@ -152,10 +131,6 @@ function DirectionPad({
   )
 }
 
-// ---------------------------------------------------------------------------
-// OBD File List
-// ---------------------------------------------------------------------------
-
 interface ObdFileListProps {
   files: ObdFileEntry[]
   selectedIndex: number
@@ -166,12 +141,9 @@ function ObdFileList({ files, selectedIndex, onSelect }: ObdFileListProps): Reac
   const listRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
-    if (listRef.current && selectedIndex >= 0) {
-      const el = listRef.current.children[selectedIndex] as HTMLElement
-      if (el) {
-        el.scrollIntoView({ block: 'nearest' })
-      }
-    }
+    if (!listRef.current || selectedIndex < 0) return
+    const element = listRef.current.children[selectedIndex] as HTMLElement | undefined
+    element?.scrollIntoView({ block: 'nearest' })
   }, [selectedIndex])
 
   if (files.length === 0) {
@@ -201,103 +173,78 @@ function ObdFileList({ files, selectedIndex, onSelect }: ObdFileListProps): Reac
   )
 }
 
-// ---------------------------------------------------------------------------
-// ObjectViewerDialog
-// ---------------------------------------------------------------------------
-
-export function ObjectViewerDialog({
-  open,
-  onClose
-}: ObjectViewerDialogProps): React.JSX.Element | null {
+function ObjectViewerContent({
+  active,
+  editingThingData,
+  fillWindow = false
+}: ObjectViewerContentProps): React.JSX.Element {
   const { t } = useTranslation()
-  // Source modes: 'editing' uses current editing thing, 'obd' browses OBD files
   const [sourceMode, setSourceMode] = useState<'editing' | 'obd'>('editing')
-
-  // OBD file browser state
   const [obdFiles, setObdFiles] = useState<ObdFileEntry[]>([])
   const [obdSelectedIndex, setObdSelectedIndex] = useState(-1)
   const [obdThingData, setObdThingData] = useState<ThingData | null>(null)
   const [obdLoading, setObdLoading] = useState(false)
   const [obdError, setObdError] = useState<string | null>(null)
-
-  // Viewer state
-  const [patternX, setPatternX] = useState(2) // Default South for outfits
+  const [patternX, setPatternX] = useState(2)
   const [frameGroupType, setFrameGroupType] = useState<FrameGroupType>(FGT.DEFAULT)
   const [zoom, setZoom] = useState(1.0)
   const [showBgColor, setShowBgColor] = useState(false)
   const [bgColor, setBgColor] = useState('#ff00ff')
 
-  // Playback
   const isPlaying = useAnimationStore((s) => s.isPlaying)
   const currentFrame = useAnimationStore((s) => s.currentFrame)
   const animFrameRef = useRef<number>(0)
-
-  // Get editing thing from store
-  const editingThingData = useEditorStore(selectEditingThingData)
-
-  // Active thing data based on source mode
   const thingData = sourceMode === 'editing' ? editingThingData : obdThingData
-
-  // Derived info
   const thing = thingData?.thing
   const category = thing?.category
   const isOutfit = category === ThingCategory.OUTFIT
-  const fg = useMemo(() => {
+
+  const frameGroup = useMemo(() => {
     if (!thing?.frameGroups) return null
-    const idx = frameGroupType === FGT.WALKING ? 1 : 0
-    return thing.frameGroups[idx] ?? thing.frameGroups[0] ?? null
+    const index = frameGroupType === FGT.WALKING ? 1 : 0
+    return thing.frameGroups[index] ?? thing.frameGroups[0] ?? null
   }, [thing, frameGroupType])
 
   const hasWalking = isOutfit && thing?.frameGroups && thing.frameGroups.length > 1
-  const hasAnimation = fg !== null && fg !== undefined && fg.frames > 1
-  const maxDirections = fg?.patternX ?? 1
+  const hasAnimation = frameGroup !== null && frameGroup !== undefined && frameGroup.frames > 1
+  const maxDirections = frameGroup?.patternX ?? 1
 
-  // Setup animation when thing changes
   useEffect(() => {
-    if (!open) return
+    if (!active) return
 
-    if (!thingData || !fg) {
+    if (!thingData || !frameGroup) {
       useAnimationStore.getState().clearFrameGroup()
       return
     }
 
-    useAnimationStore.getState().setFrameGroup(fg, frameGroupType)
+    useAnimationStore.getState().setFrameGroup(frameGroup, frameGroupType)
     if (hasAnimation) {
       useAnimationStore.getState().play()
     }
-  }, [open, thingData, fg, frameGroupType, hasAnimation])
+  }, [active, thingData, frameGroup, frameGroupType, hasAnimation])
 
-  // Animation playback loop
   useEffect(() => {
-    if (!isPlaying || !open) return
+    if (!isPlaying || !active) return
 
     const tick = (time: number): void => {
       useAnimationStore.getState().update(time)
       animFrameRef.current = requestAnimationFrame(tick)
     }
-    animFrameRef.current = requestAnimationFrame(tick)
 
+    animFrameRef.current = requestAnimationFrame(tick)
     return () => {
       cancelAnimationFrame(animFrameRef.current)
     }
-  }, [isPlaying, open])
+  }, [active, isPlaying])
 
-  // Reset state when dialog opens
   useEffect(() => {
-    if (open) {
-      setSourceMode('editing')
-      setObdFiles([])
-      setObdSelectedIndex(-1)
-      setObdThingData(null)
+    if (active) {
       setObdError(null)
       setZoom(1.0)
 
-      // Default direction: South for outfits, North for others
       if (editingThingData) {
         const isOutfitCategory = editingThingData.thing.category === ThingCategory.OUTFIT
         setPatternX(isOutfitCategory ? 2 : 0)
-
-        // Default to WALKING if available
         const hasWalkingGroup =
           isOutfitCategory &&
           editingThingData.thing.frameGroups &&
@@ -311,9 +258,8 @@ export function ObjectViewerDialog({
       useAnimationStore.getState().clearFrameGroup()
       cancelAnimationFrame(animFrameRef.current)
     }
-  }, [open, editingThingData])
+  }, [active, editingThingData])
 
-  // Load OBD file
   const loadObdFile = useCallback(async (filePath: string) => {
     setObdLoading(true)
     setObdError(null)
@@ -327,55 +273,46 @@ export function ObjectViewerDialog({
 
       const isOutfitCategory = decoded.thing.category === ThingCategory.OUTFIT
       setPatternX(isOutfitCategory ? 2 : 0)
-
       const hasWalkingGroup =
         isOutfitCategory && decoded.thing.frameGroups && decoded.thing.frameGroups.length > 1
       setFrameGroupType(hasWalkingGroup ? FGT.WALKING : FGT.DEFAULT)
-    } catch (err) {
-      setObdError(err instanceof Error ? err.message : String(err))
+    } catch (error) {
+      setObdError(error instanceof Error ? error.message : String(error))
     } finally {
       setObdLoading(false)
     }
   }, [])
 
-  // Open OBD files dialog
   const handleOpenObdFiles = useCallback(async () => {
     try {
       const result = await window.api.file.showOpenDialog({
         filters: [{ name: 'Object Builder Data', extensions: ['obd'] }]
       })
 
-      if (result.canceled || !result.filePaths || result.filePaths.length === 0) return
+      if (result.canceled || result.filePaths.length === 0) return
 
       const selectedPath = result.filePaths[0]
-
-      // Get directory and list all OBD files
-      const dirParts = selectedPath.split('/')
-      dirParts.pop()
-      const directory = dirParts.join('/')
-
+      const normalized = selectedPath.replace(/\\/g, '/')
+      const directory = normalized.replace(/\/[^/]+$/u, '')
       const allFiles = await window.api.file.list(directory, ['obd'])
-      const entries: ObdFileEntry[] = allFiles.map((f) => ({
-        name: f.split('/').pop() ?? f,
-        path: f
-      }))
-
-      // Sort numerically by filename
-      entries.sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }))
+      const entries = allFiles
+        .map((filePath) => ({
+          name: filePath.split('/').pop() ?? filePath,
+          path: filePath
+        }))
+        .sort((left, right) => left.name.localeCompare(right.name, undefined, { numeric: true }))
 
       setObdFiles(entries)
       setSourceMode('obd')
 
-      // Find and select the opened file
-      const selectedIdx = entries.findIndex((e) => e.path === selectedPath)
-      setObdSelectedIndex(selectedIdx >= 0 ? selectedIdx : 0)
+      const nextIndex = entries.findIndex((entry) => entry.path === selectedPath)
+      setObdSelectedIndex(nextIndex >= 0 ? nextIndex : 0)
       await loadObdFile(selectedPath)
-    } catch (err) {
-      setObdError(err instanceof Error ? err.message : String(err))
+    } catch (error) {
+      setObdError(error instanceof Error ? error.message : String(error))
     }
   }, [loadObdFile])
 
-  // OBD file navigation
   const handleObdSelect = useCallback(
     async (index: number) => {
       if (index < 0 || index >= obdFiles.length) return
@@ -387,17 +324,16 @@ export function ObjectViewerDialog({
 
   const handlePrevious = useCallback(() => {
     if (obdSelectedIndex > 0) {
-      handleObdSelect(obdSelectedIndex - 1)
+      void handleObdSelect(obdSelectedIndex - 1)
     }
-  }, [obdSelectedIndex, handleObdSelect])
+  }, [handleObdSelect, obdSelectedIndex])
 
   const handleNext = useCallback(() => {
     if (obdSelectedIndex < obdFiles.length - 1) {
-      handleObdSelect(obdSelectedIndex + 1)
+      void handleObdSelect(obdSelectedIndex + 1)
     }
-  }, [obdSelectedIndex, obdFiles.length, handleObdSelect])
+  }, [handleObdSelect, obdFiles.length, obdSelectedIndex])
 
-  // Playback controls
   const handlePlay = useCallback(() => {
     useAnimationStore.getState().play()
   }, [])
@@ -426,27 +362,25 @@ export function ObjectViewerDialog({
     useAnimationStore.getState().lastFrame()
   }, [])
 
-  // Zoom
-  const handleZoomChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
-    setZoom(parseFloat(e.target.value))
+  const handleZoomChange = useCallback((event: React.ChangeEvent<HTMLInputElement>) => {
+    setZoom(parseFloat(event.target.value))
   }, [])
 
-  // Keyboard shortcuts
   useEffect(() => {
-    if (!open) return
+    if (!active) return
 
-    const handleKeyDown = (e: KeyboardEvent): void => {
-      if (e.ctrlKey || e.metaKey) {
-        if (e.key === 'o') {
-          e.preventDefault()
-          handleOpenObdFiles()
+    const handleKeyDown = (event: KeyboardEvent): void => {
+      if (event.ctrlKey || event.metaKey) {
+        if (event.key === 'o') {
+          event.preventDefault()
+          void handleOpenObdFiles()
         }
       } else if (sourceMode === 'obd' && obdFiles.length > 1) {
-        if (e.key === 'ArrowLeft') {
-          e.preventDefault()
+        if (event.key === 'ArrowLeft') {
+          event.preventDefault()
           handlePrevious()
-        } else if (e.key === 'ArrowRight') {
-          e.preventDefault()
+        } else if (event.key === 'ArrowRight') {
+          event.preventDefault()
           handleNext()
         }
       }
@@ -454,17 +388,15 @@ export function ObjectViewerDialog({
 
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [open, sourceMode, obdFiles.length, handlePrevious, handleNext, handleOpenObdFiles])
+  }, [active, handleNext, handleOpenObdFiles, handlePrevious, obdFiles.length, sourceMode])
 
-  // Status text
   const statusText = useMemo(() => {
     if (!thingData) return ''
 
     const parts: string[] = []
 
     if (sourceMode === 'obd' && obdFiles[obdSelectedIndex]) {
-      const fileName = obdFiles[obdSelectedIndex].name.replace(/\.obd$/i, '')
-      parts.push(`Name: ${fileName}`)
+      parts.push(`Name: ${obdFiles[obdSelectedIndex].name.replace(/\.obd$/iu, '')}`)
     } else if (thing) {
       parts.push(`${thing.category} #${thing.id}`)
     }
@@ -482,7 +414,262 @@ export function ObjectViewerDialog({
     }
 
     return parts.join(' | ')
-  }, [thingData, thing, sourceMode, obdFiles, obdSelectedIndex])
+  }, [obdFiles, obdSelectedIndex, sourceMode, thing, thingData])
+
+  return (
+    <div
+      className={`flex min-h-0 flex-col gap-3 overflow-hidden ${fillWindow ? 'h-full' : ''}`}
+      style={fillWindow ? undefined : { height: 'min(560px, calc(90vh - 10rem))' }}
+    >
+      <div className="flex items-center gap-2 border-b border-border pb-2">
+        <div className="flex items-center gap-1">
+          <button
+            type="button"
+            className={`rounded px-2 py-1 text-xs ${
+              sourceMode === 'editing'
+                ? 'bg-accent text-white'
+                : 'bg-bg-tertiary text-text-primary hover:bg-bg-hover'
+            }`}
+            onClick={() => setSourceMode('editing')}
+            title="View current editing object"
+          >
+            Current
+          </button>
+          <button
+            type="button"
+            className={`flex items-center gap-1 rounded px-2 py-1 text-xs ${
+              sourceMode === 'obd'
+                ? 'bg-accent text-white'
+                : 'bg-bg-tertiary text-text-primary hover:bg-bg-hover'
+            }`}
+            onClick={() => void handleOpenObdFiles()}
+            title="Open OBD files (Ctrl+O)"
+          >
+            <IconOpen size={12} /> Open OBD...
+          </button>
+        </div>
+
+        <div className="flex-1" />
+
+        <label className="flex items-center gap-1 text-xs text-text-primary">
+          <input
+            type="checkbox"
+            className="accent-accent"
+            checked={showBgColor}
+            onChange={(event) => setShowBgColor(event.target.checked)}
+          />
+          Background
+        </label>
+        <input
+          type="color"
+          className="h-5 w-5 cursor-pointer rounded border border-border"
+          value={bgColor}
+          onChange={(event) => setBgColor(event.target.value)}
+          disabled={!showBgColor}
+          title="Background color"
+        />
+      </div>
+
+      <div className="flex min-h-0 flex-1 items-start gap-3 overflow-hidden">
+        {sourceMode === 'obd' && (
+          <div className="flex h-full min-h-0 w-48 shrink-0 flex-col rounded border border-border">
+            <div className="border-b border-border px-2 py-1 text-xs font-semibold text-text-secondary">
+              Files ({obdFiles.length})
+            </div>
+            <div className="flex-1 overflow-hidden">
+              <ObdFileList
+                files={obdFiles}
+                selectedIndex={obdSelectedIndex}
+                onSelect={handleObdSelect}
+              />
+            </div>
+            <div className="flex items-center justify-center gap-1 border-t border-border py-1">
+              <button
+                type="button"
+                className="flex items-center gap-1 rounded px-2 py-0.5 text-xs text-text-primary hover:bg-bg-hover disabled:opacity-40"
+                onClick={handlePrevious}
+                disabled={obdSelectedIndex <= 0}
+                title="Previous (Left Arrow)"
+              >
+                <IconChevronLeft size={12} /> Prev
+              </button>
+              <button
+                type="button"
+                className="flex items-center gap-1 rounded px-2 py-0.5 text-xs text-text-primary hover:bg-bg-hover disabled:opacity-40"
+                onClick={handleNext}
+                disabled={obdSelectedIndex >= obdFiles.length - 1}
+                title="Next (Right Arrow)"
+              >
+                Next <IconChevronRight size={12} />
+              </button>
+            </div>
+          </div>
+        )}
+
+        <div className="flex h-full min-h-0 flex-1 flex-col items-center justify-center rounded border border-border p-4">
+          {obdLoading ? (
+            <div className="flex items-center gap-2 text-xs text-text-muted">
+              <div className="h-4 w-4 animate-spin rounded-full border-2 border-text-muted border-t-accent" />
+              Loading...
+            </div>
+          ) : obdError ? (
+            <div className="text-xs text-error">{obdError}</div>
+          ) : !thingData ? (
+            <div className="text-xs text-text-muted">
+              {sourceMode === 'editing'
+                ? 'No object selected. Select an object from the list to preview.'
+                : 'Open an OBD file to preview.'}
+            </div>
+          ) : (
+            <div
+              style={{
+                backgroundColor: showBgColor ? bgColor : 'transparent',
+                padding: 8,
+                borderRadius: 4
+              }}
+            >
+              <SpriteRenderer
+                thingData={thingData}
+                frameGroupType={frameGroupType}
+                frame={currentFrame}
+                patternX={patternX}
+                zoom={zoom}
+                minSize={96}
+                showCheckerboard={!showBgColor}
+                drawBlendLayer={!isOutfit}
+                className="rounded"
+                onZoomChange={setZoom}
+              />
+            </div>
+          )}
+        </div>
+
+        <div className="flex w-48 shrink-0 self-start flex-col gap-3">
+          <div className="rounded border border-border p-2">
+            <div className="mb-1 text-xs font-semibold text-text-secondary">Direction</div>
+            <div className="flex justify-center">
+              <DirectionPad
+                direction={patternX}
+                onDirectionChange={setPatternX}
+                maxDirections={maxDirections}
+              />
+            </div>
+          </div>
+
+          {hasWalking && (
+            <div className="rounded border border-border p-2">
+              <div className="mb-1 text-xs font-semibold text-text-secondary">Frame Group</div>
+              <select
+                className="w-full rounded border border-border bg-bg-input px-2 py-1 text-xs text-text-primary"
+                value={frameGroupType}
+                onChange={(event) => setFrameGroupType(Number(event.target.value) as FrameGroupType)}
+              >
+                <option value={FGT.DEFAULT}>{t('thingType.idle')}</option>
+                <option value={FGT.WALKING}>{t('thingType.walking')}</option>
+              </select>
+            </div>
+          )}
+
+          {hasAnimation && (
+            <div className="rounded border border-border p-2">
+              <div className="mb-1 text-xs font-semibold text-text-secondary">Playback</div>
+              <div className="flex flex-wrap justify-center gap-0.5">
+                <button
+                  type="button"
+                  className="flex items-center justify-center rounded p-1 text-text-primary hover:bg-bg-hover"
+                  onClick={handleFirstFrame}
+                  title={t('labels.firstFrame')}
+                >
+                  <IconFirst size={14} />
+                </button>
+                <button
+                  type="button"
+                  className="flex items-center justify-center rounded p-1 text-text-primary hover:bg-bg-hover"
+                  onClick={handlePrevFrame}
+                  title={t('labels.previousFrame')}
+                >
+                  <IconPrevious size={14} />
+                </button>
+                {isPlaying ? (
+                  <button
+                    type="button"
+                    className="flex items-center justify-center rounded bg-accent p-1 text-white hover:bg-accent-hover"
+                    onClick={handlePause}
+                    title={t('labels.pause')}
+                  >
+                    <IconPause size={14} />
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    className="flex items-center justify-center rounded p-1 text-text-primary hover:bg-bg-hover"
+                    onClick={handlePlay}
+                    title={t('labels.play')}
+                  >
+                    <IconPlay size={14} />
+                  </button>
+                )}
+                <button
+                  type="button"
+                  className="flex items-center justify-center rounded p-1 text-text-primary hover:bg-bg-hover"
+                  onClick={handleStop}
+                  title={t('labels.stop')}
+                >
+                  <IconStop size={14} />
+                </button>
+                <button
+                  type="button"
+                  className="flex items-center justify-center rounded p-1 text-text-primary hover:bg-bg-hover"
+                  onClick={handleNextFrame}
+                  title={t('labels.nextFrame')}
+                >
+                  <IconNext size={14} />
+                </button>
+                <button
+                  type="button"
+                  className="flex items-center justify-center rounded p-1 text-text-primary hover:bg-bg-hover"
+                  onClick={handleLastFrame}
+                  title={t('labels.lastFrame')}
+                >
+                  <IconLast size={14} />
+                </button>
+              </div>
+              <div className="mt-1 text-center text-[10px] text-text-muted">
+                Frame {currentFrame + 1} / {frameGroup?.frames ?? 0}
+              </div>
+            </div>
+          )}
+
+          <div className="rounded border border-border p-2">
+            <div className="mb-1 text-xs font-semibold text-text-secondary">{t('labels.zoom')}</div>
+            <div className="flex items-center gap-2">
+              <input
+                type="range"
+                className="flex-1 accent-accent"
+                min="1.0"
+                max="5.0"
+                step="0.1"
+                value={zoom}
+                onChange={handleZoomChange}
+                disabled={!thingData}
+              />
+              <span className="w-9 text-right text-xs text-text-primary">{zoom.toFixed(1)}x</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div className="flex items-center justify-between border-t border-border pt-2">
+        <span className="text-xs text-text-secondary">{statusText}</span>
+        <span className="text-xs text-text-secondary">Zoom: {zoom.toFixed(1)}x</span>
+      </div>
+    </div>
+  )
+}
+
+export function ObjectViewerDialog({ open, onClose }: ObjectViewerDialogProps): React.JSX.Element | null {
+  const { t } = useTranslation()
+  const editingThingData = useEditorStore(selectEditingThingData)
 
   if (!open) return null
 
@@ -495,268 +682,49 @@ export function ObjectViewerDialog({
       closeOnBackdrop={false}
       bodyScrollable={false}
     >
-      <div
-        className="flex min-h-0 flex-col gap-3 overflow-hidden"
-        style={{ height: 'min(560px, calc(90vh - 10rem))' }}
-      >
-        {/* Toolbar */}
-        <div className="flex items-center gap-2 border-b border-border pb-2">
-          {/* Source selector */}
-          <div className="flex items-center gap-1">
-            <button
-              type="button"
-              className={`rounded px-2 py-1 text-xs ${
-                sourceMode === 'editing'
-                  ? 'bg-accent text-white'
-                  : 'bg-bg-tertiary text-text-primary hover:bg-bg-hover'
-              }`}
-              onClick={() => setSourceMode('editing')}
-              title="View current editing object"
-            >
-              Current
-            </button>
-            <button
-              type="button"
-              className={`flex items-center gap-1 rounded px-2 py-1 text-xs ${
-                sourceMode === 'obd'
-                  ? 'bg-accent text-white'
-                  : 'bg-bg-tertiary text-text-primary hover:bg-bg-hover'
-              }`}
-              onClick={handleOpenObdFiles}
-              title="Open OBD files (Ctrl+O)"
-            >
-              <IconOpen size={12} /> Open OBD...
-            </button>
-          </div>
-
-          <div className="flex-1" />
-
-          {/* Background color controls */}
-          <label className="flex items-center gap-1 text-xs text-text-primary">
-            <input
-              type="checkbox"
-              className="accent-accent"
-              checked={showBgColor}
-              onChange={(e) => setShowBgColor(e.target.checked)}
-            />
-            Background
-          </label>
-          <input
-            type="color"
-            className="h-5 w-5 cursor-pointer rounded border border-border"
-            value={bgColor}
-            onChange={(e) => setBgColor(e.target.value)}
-            disabled={!showBgColor}
-            title="Background color"
-          />
-        </div>
-
-        {/* Main content */}
-        <div className="flex min-h-0 flex-1 items-start gap-3 overflow-hidden">
-          {/* Left: OBD file list (only in OBD mode) */}
-          {sourceMode === 'obd' && (
-            <div className="flex h-full min-h-0 w-48 shrink-0 flex-col rounded border border-border">
-              <div className="border-b border-border px-2 py-1 text-xs font-semibold text-text-secondary">
-                Files ({obdFiles.length})
-              </div>
-              <div className="flex-1 overflow-hidden">
-                <ObdFileList
-                  files={obdFiles}
-                  selectedIndex={obdSelectedIndex}
-                  onSelect={handleObdSelect}
-                />
-              </div>
-              {/* Navigation buttons */}
-              <div className="flex items-center justify-center gap-1 border-t border-border py-1">
-                <button
-                  type="button"
-                  className="flex items-center gap-1 rounded px-2 py-0.5 text-xs text-text-primary hover:bg-bg-hover disabled:opacity-40"
-                  onClick={handlePrevious}
-                  disabled={obdSelectedIndex <= 0}
-                  title="Previous (Left Arrow)"
-                >
-                  <IconChevronLeft size={12} /> Prev
-                </button>
-                <button
-                  type="button"
-                  className="flex items-center gap-1 rounded px-2 py-0.5 text-xs text-text-primary hover:bg-bg-hover disabled:opacity-40"
-                  onClick={handleNext}
-                  disabled={obdSelectedIndex >= obdFiles.length - 1}
-                  title="Next (Right Arrow)"
-                >
-                  Next <IconChevronRight size={12} />
-                </button>
-              </div>
-            </div>
-          )}
-
-          {/* Center: Preview area */}
-          <div className="flex h-full min-h-0 flex-1 flex-col items-center justify-center rounded border border-border p-4">
-            {obdLoading ? (
-              <div className="flex items-center gap-2 text-xs text-text-muted">
-                <div className="h-4 w-4 animate-spin rounded-full border-2 border-text-muted border-t-accent" />
-                Loading...
-              </div>
-            ) : obdError ? (
-              <div className="text-xs text-error">{obdError}</div>
-            ) : !thingData ? (
-              <div className="text-xs text-text-muted">
-                {sourceMode === 'editing'
-                  ? 'No object selected. Select an object from the list to preview.'
-                  : 'Open an OBD file to preview.'}
-              </div>
-            ) : (
-              <div
-                style={{
-                  backgroundColor: showBgColor ? bgColor : 'transparent',
-                  padding: 8,
-                  borderRadius: 4
-                }}
-              >
-                <SpriteRenderer
-                  thingData={thingData}
-                  frameGroupType={frameGroupType}
-                  frame={currentFrame}
-                  patternX={patternX}
-                  zoom={zoom}
-                  minSize={96}
-                  showCheckerboard={!showBgColor}
-                  drawBlendLayer={!isOutfit}
-                  className="rounded"
-                  onZoomChange={setZoom}
-                />
-              </div>
-            )}
-          </div>
-
-          {/* Right: Controls panel */}
-          <div className="flex w-48 shrink-0 self-start flex-col gap-3">
-            {/* Direction pad */}
-            <div className="rounded border border-border p-2">
-              <div className="mb-1 text-xs font-semibold text-text-secondary">Direction</div>
-              <div className="flex justify-center">
-                <DirectionPad
-                  direction={patternX}
-                  onDirectionChange={setPatternX}
-                  maxDirections={maxDirections}
-                />
-              </div>
-            </div>
-
-            {/* Frame group selector (outfits only) */}
-            {hasWalking && (
-              <div className="rounded border border-border p-2">
-                <div className="mb-1 text-xs font-semibold text-text-secondary">Frame Group</div>
-                <select
-                  className="w-full rounded border border-border bg-bg-input px-2 py-1 text-xs text-text-primary"
-                  value={frameGroupType}
-                  onChange={(e) => setFrameGroupType(Number(e.target.value) as FrameGroupType)}
-                >
-                  <option value={FGT.DEFAULT}>{t('thingType.idle')}</option>
-                  <option value={FGT.WALKING}>{t('thingType.walking')}</option>
-                </select>
-              </div>
-            )}
-
-            {/* Playback controls */}
-            {hasAnimation && (
-              <div className="rounded border border-border p-2">
-                <div className="mb-1 text-xs font-semibold text-text-secondary">Playback</div>
-                <div className="flex flex-wrap justify-center gap-0.5">
-                  <button
-                    type="button"
-                    className="flex items-center justify-center rounded p-1 text-text-primary hover:bg-bg-hover"
-                    onClick={handleFirstFrame}
-                    title={t('labels.firstFrame')}
-                  >
-                    <IconFirst size={14} />
-                  </button>
-                  <button
-                    type="button"
-                    className="flex items-center justify-center rounded p-1 text-text-primary hover:bg-bg-hover"
-                    onClick={handlePrevFrame}
-                    title={t('labels.previousFrame')}
-                  >
-                    <IconPrevious size={14} />
-                  </button>
-                  {isPlaying ? (
-                    <button
-                      type="button"
-                      className="flex items-center justify-center rounded bg-accent p-1 text-white hover:bg-accent-hover"
-                      onClick={handlePause}
-                      title={t('labels.pause')}
-                    >
-                      <IconPause size={14} />
-                    </button>
-                  ) : (
-                    <button
-                      type="button"
-                      className="flex items-center justify-center rounded p-1 text-text-primary hover:bg-bg-hover"
-                      onClick={handlePlay}
-                      title={t('labels.play')}
-                    >
-                      <IconPlay size={14} />
-                    </button>
-                  )}
-                  <button
-                    type="button"
-                    className="flex items-center justify-center rounded p-1 text-text-primary hover:bg-bg-hover"
-                    onClick={handleStop}
-                    title={t('labels.stop')}
-                  >
-                    <IconStop size={14} />
-                  </button>
-                  <button
-                    type="button"
-                    className="flex items-center justify-center rounded p-1 text-text-primary hover:bg-bg-hover"
-                    onClick={handleNextFrame}
-                    title={t('labels.nextFrame')}
-                  >
-                    <IconNext size={14} />
-                  </button>
-                  <button
-                    type="button"
-                    className="flex items-center justify-center rounded p-1 text-text-primary hover:bg-bg-hover"
-                    onClick={handleLastFrame}
-                    title={t('labels.lastFrame')}
-                  >
-                    <IconLast size={14} />
-                  </button>
-                </div>
-                <div className="mt-1 text-center text-[10px] text-text-muted">
-                  Frame {currentFrame + 1} / {fg?.frames ?? 0}
-                </div>
-              </div>
-            )}
-
-            {/* Zoom */}
-            <div className="rounded border border-border p-2">
-              <div className="mb-1 text-xs font-semibold text-text-secondary">
-                {t('labels.zoom')}
-              </div>
-              <div className="flex items-center gap-2">
-                <input
-                  type="range"
-                  className="flex-1 accent-accent"
-                  min="1.0"
-                  max="5.0"
-                  step="0.1"
-                  value={zoom}
-                  onChange={handleZoomChange}
-                  disabled={!thingData}
-                />
-                <span className="w-9 text-right text-xs text-text-primary">{zoom.toFixed(1)}x</span>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        {/* Status bar */}
-        <div className="flex items-center justify-between border-t border-border pt-2">
-          <span className="text-xs text-text-secondary">{statusText}</span>
-          <span className="text-xs text-text-secondary">Zoom: {zoom.toFixed(1)}x</span>
-        </div>
-      </div>
+      <ObjectViewerContent active={open} editingThingData={editingThingData} />
     </Modal>
+  )
+}
+
+export function DetachedObjectViewerWindow(): React.JSX.Element {
+  const { t } = useTranslation()
+  const [editingThingData, setEditingThingData] = useState<ThingData | null>(null)
+
+  useEffect(() => {
+    let mounted = true
+
+    void window.api.objectViewer
+      .getCurrentThing()
+      .then((thingData) => {
+        if (mounted) {
+          setEditingThingData(thingData ? cloneThingData(thingData) : null)
+        }
+      })
+      .catch(() => {
+        if (mounted) {
+          setEditingThingData(null)
+        }
+      })
+
+    const unsubscribe = window.api.objectViewer.onCurrentThingChanged((thingData) => {
+      setEditingThingData(thingData ? cloneThingData(thingData) : null)
+    })
+
+    return () => {
+      mounted = false
+      unsubscribe()
+    }
+  }, [])
+
+  return (
+    <div className="flex h-screen flex-col bg-bg-primary text-text-primary">
+      <div className="border-b border-border px-4 py-3">
+        <h1 className="text-base font-semibold text-text-primary">{t('labels.objectViewer')}</h1>
+      </div>
+      <div className="flex-1 overflow-hidden p-4">
+        <ObjectViewerContent active={true} editingThingData={editingThingData} fillWindow />
+      </div>
+    </div>
   )
 }

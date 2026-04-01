@@ -1,1 +1,5 @@
-export { ObjectViewerDialog, type ObjectViewerDialogProps } from './ObjectViewerDialog'
+export {
+  ObjectViewerDialog,
+  DetachedObjectViewerWindow,
+  type ObjectViewerDialogProps
+} from './ObjectViewerDialog'

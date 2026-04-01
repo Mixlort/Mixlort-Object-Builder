@@ -80,6 +80,11 @@ import { updateMenuState, getMenuState } from './services/menu-service'
 import { writeLog, getLogPath } from './services/logger-service'
 import { getRecoveryData, clearRecoveryData } from './services/recovery-service'
 import { checkForUpdates, downloadUpdate, quitAndInstall } from './services/updater-service'
+import {
+  openObjectViewerWindow,
+  setObjectViewerCurrentThing,
+  getObjectViewerCurrentThing
+} from './services/object-viewer-window-service'
 
 // ---------------------------------------------------------------------------
 // File watcher -> renderer event forwarding
@@ -385,6 +390,22 @@ export function registerIpcHandlers(): void {
     if (win && !win.isDestroyed()) {
       win.destroy()
     }
+  })
+
+  // -------------------------------------------------------------------------
+  // Object Viewer handlers
+  // -------------------------------------------------------------------------
+
+  ipcMain.handle(channels.OBJECT_VIEWER_OPEN, async () => {
+    await openObjectViewerWindow()
+  })
+
+  ipcMain.handle(channels.OBJECT_VIEWER_SET_CURRENT_THING, (_event, thingData: unknown) => {
+    setObjectViewerCurrentThing(thingData)
+  })
+
+  ipcMain.handle(channels.OBJECT_VIEWER_GET_CURRENT_THING, () => {
+    return getObjectViewerCurrentThing()
   })
 
   // -------------------------------------------------------------------------

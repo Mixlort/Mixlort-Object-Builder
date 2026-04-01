@@ -32,6 +32,7 @@ import type {
   MenuAction,
   MenuState
 } from '../shared/ipc-types'
+import type { ThingData } from '../renderer/src/types/things'
 
 // Re-export types for renderer convenience
 export type {
@@ -218,6 +219,21 @@ export interface ElectronAppAPI {
 }
 
 // ---------------------------------------------------------------------------
+// Object Viewer API
+// ---------------------------------------------------------------------------
+
+export interface ElectronObjectViewerAPI {
+  /** Open or focus the detached object viewer window. */
+  open(): Promise<void>
+  /** Store the current thing snapshot for the detached object viewer. */
+  setCurrentThing(thingData: ThingData | null): Promise<void>
+  /** Read the latest stored thing snapshot. */
+  getCurrentThing(): Promise<ThingData | null>
+  /** Listen for thing snapshot changes. Returns cleanup function. */
+  onCurrentThingChanged(callback: (thingData: ThingData | null) => void): () => void
+}
+
+// ---------------------------------------------------------------------------
 // Recovery API
 // ---------------------------------------------------------------------------
 
@@ -278,6 +294,7 @@ export interface ElectronAPI {
   menu: ElectronMenuAPI
   log: ElectronLogAPI
   app: ElectronAppAPI
+  objectViewer: ElectronObjectViewerAPI
   recovery: ElectronRecoveryAPI
   updater: ElectronUpdaterAPI
 }

@@ -69,6 +69,11 @@ import {
   // App lifecycle
   APP_CONFIRM_CLOSE,
   APP_CLOSE_CONFIRMED,
+  // Object viewer
+  OBJECT_VIEWER_OPEN,
+  OBJECT_VIEWER_SET_CURRENT_THING,
+  OBJECT_VIEWER_GET_CURRENT_THING,
+  OBJECT_VIEWER_CURRENT_THING_CHANGED,
   // Recovery
   RECOVERY_GET_DATA,
   RECOVERY_CLEAR,
@@ -353,6 +358,21 @@ const api = {
     onConfirmClose: (callback: () => void) => onEvent(APP_CONFIRM_CLOSE, callback),
 
     closeConfirmed: () => ipcRenderer.invoke(APP_CLOSE_CONFIRMED)
+  },
+
+  // -------------------------------------------------------------------------
+  // Object Viewer
+  // -------------------------------------------------------------------------
+  objectViewer: {
+    open: () => ipcRenderer.invoke(OBJECT_VIEWER_OPEN),
+
+    setCurrentThing: (thingData: unknown | null) =>
+      ipcRenderer.invoke(OBJECT_VIEWER_SET_CURRENT_THING, thingData),
+
+    getCurrentThing: () => ipcRenderer.invoke(OBJECT_VIEWER_GET_CURRENT_THING),
+
+    onCurrentThingChanged: (callback: (thingData: unknown | null) => void) =>
+      onEvent(OBJECT_VIEWER_CURRENT_THING_CHANGED, callback)
   },
 
   // -------------------------------------------------------------------------

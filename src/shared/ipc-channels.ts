@@ -101,6 +101,22 @@ export const APP_CONFIRM_CLOSE = 'app:confirmClose'
 export const APP_CLOSE_CONFIRMED = 'app:closeConfirmed'
 
 // ---------------------------------------------------------------------------
+// Object Viewer channels
+// ---------------------------------------------------------------------------
+
+/** invoke: renderer asks main to open/focus the detached object viewer window */
+export const OBJECT_VIEWER_OPEN = 'objectViewer:open'
+
+/** invoke: renderer stores the current thing snapshot for the detached object viewer */
+export const OBJECT_VIEWER_SET_CURRENT_THING = 'objectViewer:setCurrentThing'
+
+/** invoke: renderer asks main for the last stored thing snapshot */
+export const OBJECT_VIEWER_GET_CURRENT_THING = 'objectViewer:getCurrentThing'
+
+/** event: main notifies the detached object viewer about a new thing snapshot */
+export const OBJECT_VIEWER_CURRENT_THING_CHANGED = 'objectViewer:currentThingChanged'
+
+// ---------------------------------------------------------------------------
 // Recovery channels (invoke)
 // ---------------------------------------------------------------------------
 
@@ -198,6 +214,10 @@ export const INVOKE_CHANNELS = [
   LOG_OPEN_FILE,
   // App lifecycle
   APP_CLOSE_CONFIRMED,
+  // Object viewer
+  OBJECT_VIEWER_OPEN,
+  OBJECT_VIEWER_SET_CURRENT_THING,
+  OBJECT_VIEWER_GET_CURRENT_THING,
   // Recovery
   RECOVERY_GET_DATA,
   RECOVERY_CLEAR,
@@ -213,5 +233,6 @@ export const EVENT_CHANNELS = [
   PROJECT_STATE_CHANGED,
   MENU_ACTION,
   APP_CONFIRM_CLOSE,
+  OBJECT_VIEWER_CURRENT_THING_CHANGED,
   UPDATER_STATUS
 ] as const

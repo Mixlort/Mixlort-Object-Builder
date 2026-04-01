@@ -24,7 +24,6 @@ import {
   MENU_VIEW_SHOW_SPRITES,
   MENU_TOOLS_FIND,
   MENU_TOOLS_LOOK_TYPE_GENERATOR,
-  MENU_TOOLS_OBJECT_VIEWER,
   MENU_TOOLS_SLICER,
   MENU_TOOLS_ANIMATION_EDITOR,
   MENU_TOOLS_ASSET_STORE,
@@ -42,6 +41,7 @@ import {
 } from '../../shared/menu-actions'
 import type { MenuAction, MenuState } from '../../shared/menu-actions'
 import { MENU_ACTION } from '../../shared/ipc-channels'
+import { isObjectViewerWindow, openObjectViewerWindow } from './object-viewer-window-service'
 
 // ---------------------------------------------------------------------------
 // Module state
@@ -56,7 +56,11 @@ let currentMenuState: MenuState = createDefaultMenuState()
 const isMac = process.platform === 'darwin'
 
 function sendMenuAction(action: MenuAction): void {
-  const win = BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0]
+  const focusedWindow = BrowserWindow.getFocusedWindow()
+  const win = isObjectViewerWindow(focusedWindow)
+    ? BrowserWindow.getAllWindows().find((window) => !isObjectViewerWindow(window))
+    : (focusedWindow ?? BrowserWindow.getAllWindows()[0])
+
   if (win && !win.isDestroyed()) {
     win.webContents.send(MENU_ACTION, action)
   }
@@ -193,7 +197,9 @@ function buildToolsMenu(): MenuItemConstructorOptions {
       },
       {
         label: 'Object Viewer',
-        click: menuClick(MENU_TOOLS_OBJECT_VIEWER)
+        click: () => {
+          void openObjectViewerWindow()
+        }
       },
       {
         label: 'Slicer',

@@ -32,7 +32,7 @@ import {
   type MenuAction
 } from '../../shared/menu-actions'
 import type { LoadProjectParams } from '../../shared/project-state'
-import { useAppStore, useEditorStore, useSpriteStore, selectUI } from './stores'
+import { useAppStore, useEditorStore, useSpriteStore, selectUI, selectEditingThingData } from './stores'
 import {
   ThingCategory,
   type ClientFeatures,
@@ -40,6 +40,7 @@ import {
   type ThingType,
   type Version,
   FrameGroupType,
+  cloneThingData,
   cloneThingType,
   createThing,
   createClientInfo,
@@ -61,7 +62,6 @@ import { ThingTypeEditor } from './features/editor'
 import { SpritePanel } from './features/sprites'
 import { PreviewPanel } from './features/preview'
 import { AnimationEditorDialog } from './features/animation'
-import { ObjectViewerDialog } from './features/viewer'
 import { SlicerDialog } from './features/slicer'
 import { AssetStoreDialog } from './features/store'
 import { LookTypeGeneratorDialog } from './features/looktype'
@@ -136,7 +136,6 @@ type ActiveDialog =
   | 'import'
   | 'bulkEdit'
   | 'animationEditor'
-  | 'objectViewer'
   | 'slicer'
   | 'assetStore'
   | 'lookTypeGenerator'
@@ -381,6 +380,7 @@ export function App(): React.JSX.Element {
   const clientInfo = useAppStore((s) => s.clientInfo)
   const getThingById = useAppStore((s) => s.getThingById)
   const addLog = useAppStore((s) => s.addLog)
+  const editingThingData = useEditorStore(selectEditingThingData)
   const setEditingThingData = useEditorStore((s) => s.setEditingThingData)
   const { setTheme } = useTheme()
   const [logHeight, setLogHeight] = useState(150)
@@ -1642,6 +1642,13 @@ export function App(): React.JSX.Element {
     window.api?.recovery?.clear()
   }, [])
 
+  useEffect(() => {
+    if (!window.api?.objectViewer?.setCurrentThing) return
+
+    const syncThing = editingThingData ? cloneThingData(editingThingData) : null
+    void window.api.objectViewer.setCurrentThing(syncThing)
+  }, [editingThingData])
+
   // Watch editor store editMode: when bulk edit is triggered from context menu, open dialog
   const editMode = useEditorStore((s) => s.editMode)
   const bulkEditIds = useEditorStore((s) => s.bulkEditIds)
@@ -1685,7 +1692,12 @@ export function App(): React.JSX.Element {
           setActiveDialog('animationEditor')
           break
         case MENU_TOOLS_OBJECT_VIEWER:
-          setActiveDialog('objectViewer')
+          void window.api.objectViewer.open().catch((error: unknown) => {
+            const message = error instanceof Error ? error.message : String(error)
+            addLog('error', `Failed to open object viewer: ${message}`)
+            setErrorMessages([message])
+            setActiveDialog('error')
+          })
           break
         case MENU_TOOLS_SLICER:
           setActiveDialog('slicer')
@@ -1721,7 +1733,7 @@ export function App(): React.JSX.Element {
           break
       }
     },
-    [togglePanel, handleCompileCurrent]
+    [addLog, togglePanel, handleCompileCurrent]
   )
 
   // Listen for menu actions from the main process (native menu clicks)
@@ -1894,8 +1906,6 @@ export function App(): React.JSX.Element {
       />
 
       <AnimationEditorDialog open={activeDialog === 'animationEditor'} onClose={closeDialog} />
-
-      <ObjectViewerDialog open={activeDialog === 'objectViewer'} onClose={closeDialog} />
 
       <SlicerDialog open={activeDialog === 'slicer'} onClose={closeDialog} />
 

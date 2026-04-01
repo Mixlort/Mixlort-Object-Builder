@@ -6,6 +6,7 @@ import { buildApplicationMenu, updateMenuState } from './services/menu-service'
 import { initLogger, closeLogger, writeError, writeLog } from './services/logger-service'
 import { clearRecoveryData, resolveCompileRecoveryOnStartup } from './services/recovery-service'
 import { initUpdater } from './services/updater-service'
+import { closeObjectViewerWindow } from './services/object-viewer-window-service'
 import { APP_CONFIRM_CLOSE } from '../shared/ipc-channels'
 
 // ---------------------------------------------------------------------------
@@ -138,6 +139,10 @@ async function createWindow(splash: BrowserWindow | null): Promise<void> {
       splash.close()
     }
     mainWindow.show()
+  })
+
+  mainWindow.on('closed', () => {
+    closeObjectViewerWindow()
   })
 
   mainWindow.webContents.setWindowOpenHandler((details) => {

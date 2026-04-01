@@ -3,6 +3,7 @@ import { createRoot } from 'react-dom/client'
 import { ThemeProvider } from './providers/ThemeProvider'
 import { ErrorBoundary } from './components/ErrorBoundary'
 import { App } from './App'
+import { DetachedObjectViewerWindow } from './features/viewer'
 import './i18n' // Initialize i18next before rendering
 import './styles/global.css'
 
@@ -34,11 +35,14 @@ window.addEventListener('unhandledrejection', (event) => {
 const root = document.getElementById('root')
 if (!root) throw new Error('Root element not found')
 
+const windowMode = new URLSearchParams(window.location.search).get('window')
+const RootComponent = windowMode === 'object-viewer' ? DetachedObjectViewerWindow : App
+
 createRoot(root).render(
   <StrictMode>
     <ErrorBoundary>
       <ThemeProvider>
-        <App />
+        <RootComponent />
       </ThemeProvider>
     </ErrorBoundary>
   </StrictMode>
