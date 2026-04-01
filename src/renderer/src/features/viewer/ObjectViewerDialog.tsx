@@ -30,10 +30,16 @@ import {
 import { useEditorStore, selectEditingThingData } from '../../stores'
 import { useAnimationStore } from '../../stores'
 import { SpriteRenderer } from '../sprites'
-import { ThingCategory, type ThingData, cloneThingData } from '../../types'
+import {
+  ThingCategory,
+  type ThingData,
+  cloneThingData,
+  getFrameGroupSpriteIndex
+} from '../../types'
 import { FrameGroupType as FGT } from '../../types/animation'
 import type { FrameGroupType } from '../../types/animation'
 import { Direction } from '../../types/geometry'
+import { argbToRgba } from '../../services/spr'
 
 export interface ObjectViewerDialogProps {
   open: boolean
@@ -49,6 +55,176 @@ interface ObjectViewerContentProps {
 interface ObdFileEntry {
   name: string
   path: string
+}
+
+const OBD_LIST_ITEM_HEIGHT = 40
+const OBD_LIST_OVERSCAN = 6
+const THUMBNAIL_SPRITE_SIZE = 32
+
+const CHECKERBOARD_STYLE = {
+  backgroundImage: [
+    'linear-gradient(45deg, #555 25%, transparent 25%)',
+    'linear-gradient(-45deg, #555 25%, transparent 25%)',
+    'linear-gradient(45deg, transparent 75%, #555 75%)',
+    'linear-gradient(-45deg, transparent 75%, #555 75%)'
+  ].join(', '),
+  backgroundSize: '8px 8px',
+  backgroundPosition: '0 0, 0 4px, 4px -4px, -4px 0px'
+} satisfies React.CSSProperties
+
+const obdThumbnailCache = new Map<string, string | null>()
+const obdThumbnailPromiseCache = new Map<string, Promise<string | null>>()
+let viewerThumbnailCanvas: HTMLCanvasElement | null = null
+
+function getViewerThumbnailCanvas(width: number, height: number): HTMLCanvasElement {
+  if (!viewerThumbnailCanvas) {
+    viewerThumbnailCanvas = document.createElement('canvas')
+  }
+
+  viewerThumbnailCanvas.width = width
+  viewerThumbnailCanvas.height = height
+  return viewerThumbnailCanvas
+}
+
+function blitSpriteArgb(
+  destination: Uint8Array,
+  destinationWidth: number,
+  source: Uint8Array,
+  destinationX: number,
+  destinationY: number
+): void {
+  for (let y = 0; y < THUMBNAIL_SPRITE_SIZE; y++) {
+    const sourceRow = y * THUMBNAIL_SPRITE_SIZE * 4
+    const destinationRow = ((destinationY + y) * destinationWidth + destinationX) * 4
+
+    for (let x = 0; x < THUMBNAIL_SPRITE_SIZE; x++) {
+      const sourceIndex = sourceRow + x * 4
+      const destinationIndex = destinationRow + x * 4
+      const sourceAlpha = source[sourceIndex]
+      if (sourceAlpha === 0) continue
+
+      if (sourceAlpha === 0xff) {
+        destination[destinationIndex] = source[sourceIndex]
+        destination[destinationIndex + 1] = source[sourceIndex + 1]
+        destination[destinationIndex + 2] = source[sourceIndex + 2]
+        destination[destinationIndex + 3] = source[sourceIndex + 3]
+      } else {
+        const inverseAlpha = 255 - sourceAlpha
+        destination[destinationIndex] = Math.min(
+          255,
+          sourceAlpha + ((destination[destinationIndex] * inverseAlpha) >> 8)
+        )
+        destination[destinationIndex + 1] =
+          ((source[sourceIndex + 1] * sourceAlpha +
+            destination[destinationIndex + 1] * inverseAlpha) >>
+            8) &
+          0xff
+        destination[destinationIndex + 2] =
+          ((source[sourceIndex + 2] * sourceAlpha +
+            destination[destinationIndex + 2] * inverseAlpha) >>
+            8) &
+          0xff
+        destination[destinationIndex + 3] =
+          ((source[sourceIndex + 3] * sourceAlpha +
+            destination[destinationIndex + 3] * inverseAlpha) >>
+            8) &
+          0xff
+      }
+    }
+  }
+}
+
+function renderThingDataThumbnail(thingData: ThingData): string | null {
+  const frameGroup = thingData.thing.frameGroups?.[0]
+  if (!frameGroup) return null
+
+  const width = frameGroup.width || 1
+  const height = frameGroup.height || 1
+  const bitmapWidth = width * THUMBNAIL_SPRITE_SIZE
+  const bitmapHeight = height * THUMBNAIL_SPRITE_SIZE
+  const isOutfit = thingData.thing.category === ThingCategory.OUTFIT
+  const layers = isOutfit ? 1 : frameGroup.layers
+  const patternX = isOutfit && frameGroup.patternX > 1 ? 2 : 0
+  const inlineSprites =
+    thingData.sprites.get(FGT.DEFAULT) ?? thingData.sprites.get(FGT.WALKING) ?? []
+
+  const pixels = new Uint8Array(bitmapWidth * bitmapHeight * 4)
+  for (let index = 0; index < pixels.length; index += 4) {
+    pixels[index] = 0xff
+    pixels[index + 1] = 0x63
+    pixels[index + 2] = 0x63
+    pixels[index + 3] = 0x63
+  }
+
+  let hasAnySprite = false
+
+  for (let layer = 0; layer < layers; layer++) {
+    for (let tileX = 0; tileX < width; tileX++) {
+      for (let tileY = 0; tileY < height; tileY++) {
+        const spriteArrayIndex = getFrameGroupSpriteIndex(
+          frameGroup,
+          tileX,
+          tileY,
+          layer,
+          patternX,
+          0,
+          0,
+          0
+        )
+
+        const spritePixels = inlineSprites[spriteArrayIndex]?.pixels
+        if (!spritePixels || spritePixels.length === 0) continue
+
+        const renderX = (width - tileX - 1) * THUMBNAIL_SPRITE_SIZE
+        const renderY = (height - tileY - 1) * THUMBNAIL_SPRITE_SIZE
+        blitSpriteArgb(pixels, bitmapWidth, spritePixels, renderX, renderY)
+        hasAnySprite = true
+      }
+    }
+  }
+
+  if (!hasAnySprite) return null
+
+  const rgba = argbToRgba(pixels)
+  const canvas = getViewerThumbnailCanvas(bitmapWidth, bitmapHeight)
+  const context = canvas.getContext('2d')
+  if (!context) return null
+
+  const imageData = new ImageData(new Uint8ClampedArray(rgba), bitmapWidth, bitmapHeight)
+  context.putImageData(imageData, 0, 0)
+  const dataUrl = canvas.toDataURL('image/png')
+  context.clearRect(0, 0, bitmapWidth, bitmapHeight)
+  return dataUrl
+}
+
+async function getObdThumbnail(filePath: string): Promise<string | null> {
+  if (obdThumbnailCache.has(filePath)) {
+    return obdThumbnailCache.get(filePath) ?? null
+  }
+
+  const pending = obdThumbnailPromiseCache.get(filePath)
+  if (pending) {
+    return pending
+  }
+
+  const promise = (async () => {
+    try {
+      const buffer = await window.api.file.readBinary(filePath)
+      const { workerService } = await import('../../workers/worker-service')
+      const thingData = await workerService.decodeObd(new Uint8Array(buffer).buffer)
+      const thumbnail = renderThingDataThumbnail(thingData)
+      obdThumbnailCache.set(filePath, thumbnail)
+      return thumbnail
+    } catch {
+      obdThumbnailCache.set(filePath, null)
+      return null
+    } finally {
+      obdThumbnailPromiseCache.delete(filePath)
+    }
+  })()
+
+  obdThumbnailPromiseCache.set(filePath, promise)
+  return promise
 }
 
 interface DirectionPadProps {
@@ -137,14 +313,83 @@ interface ObdFileListProps {
   onSelect: (index: number) => void
 }
 
+function ObdFileThumbnail({ filePath, label }: { filePath: string; label: string }): React.JSX.Element {
+  const [dataUrl, setDataUrl] = useState<string | null | undefined>(() =>
+    obdThumbnailCache.has(filePath) ? (obdThumbnailCache.get(filePath) ?? null) : undefined
+  )
+
+  useEffect(() => {
+    let cancelled = false
+
+    if (dataUrl !== undefined) {
+      return () => {
+        cancelled = true
+      }
+    }
+
+    const timer = window.setTimeout(() => {
+      void getObdThumbnail(filePath).then((thumbnail) => {
+        if (!cancelled) {
+          setDataUrl(thumbnail)
+        }
+      })
+    }, 0)
+
+    return () => {
+      cancelled = true
+      window.clearTimeout(timer)
+    }
+  }, [dataUrl, filePath])
+
+  if (dataUrl) {
+    return (
+      <img
+        src={dataUrl}
+        alt=""
+        aria-label={label}
+        className="h-8 w-8 shrink-0 rounded-sm object-contain"
+        style={{ imageRendering: 'pixelated' }}
+      />
+    )
+  }
+
+  return (
+    <div className="h-8 w-8 shrink-0 rounded-sm bg-bg-tertiary">
+      <div className="h-full w-full rounded-sm" style={CHECKERBOARD_STYLE} />
+    </div>
+  )
+}
+
 function ObdFileList({ files, selectedIndex, onSelect }: ObdFileListProps): React.JSX.Element {
   const listRef = useRef<HTMLDivElement>(null)
+  const [scrollTop, setScrollTop] = useState(0)
+  const [viewportHeight, setViewportHeight] = useState(0)
 
   useEffect(() => {
     if (!listRef.current || selectedIndex < 0) return
-    const element = listRef.current.children[selectedIndex] as HTMLElement | undefined
+    const element = listRef.current.querySelector<HTMLElement>(`[data-obd-index="${selectedIndex}"]`)
     element?.scrollIntoView({ block: 'nearest' })
   }, [selectedIndex])
+
+  useEffect(() => {
+    const listElement = listRef.current
+    if (!listElement) return
+
+    const updateViewportHeight = (): void => {
+      setViewportHeight(listElement.clientHeight)
+    }
+
+    updateViewportHeight()
+
+    const resizeObserver = new ResizeObserver(() => {
+      updateViewportHeight()
+    })
+    resizeObserver.observe(listElement)
+
+    return () => {
+      resizeObserver.disconnect()
+    }
+  }, [])
 
   if (files.length === 0) {
     return (
@@ -154,21 +399,43 @@ function ObdFileList({ files, selectedIndex, onSelect }: ObdFileListProps): Reac
     )
   }
 
+  const totalHeight = files.length * OBD_LIST_ITEM_HEIGHT
+  const startIndex = Math.max(0, Math.floor(scrollTop / OBD_LIST_ITEM_HEIGHT) - OBD_LIST_OVERSCAN)
+  const endIndex = Math.min(
+    files.length,
+    Math.ceil((scrollTop + viewportHeight) / OBD_LIST_ITEM_HEIGHT) + OBD_LIST_OVERSCAN
+  )
+  const visibleFiles = files.slice(startIndex, endIndex)
+
   return (
-    <div ref={listRef} className="h-full overflow-y-auto">
-      {files.map((file, index) => (
-        <div
-          key={file.path}
-          className={`cursor-pointer truncate px-2 py-1 text-xs ${
-            index === selectedIndex
-              ? 'bg-accent text-white'
-              : 'text-text-primary hover:bg-accent-subtle'
-          }`}
-          onClick={() => onSelect(index)}
-        >
-          {file.name}
-        </div>
-      ))}
+    <div
+      ref={listRef}
+      className="h-full overflow-y-auto"
+      onScroll={(event) => setScrollTop(event.currentTarget.scrollTop)}
+    >
+      <div className="relative" style={{ height: totalHeight }}>
+        {visibleFiles.map((file, offset) => {
+          const index = startIndex + offset
+
+          return (
+            <button
+              key={file.path}
+              type="button"
+              data-obd-index={index}
+              className={`absolute left-0 flex h-10 w-full items-center gap-2 px-2 py-1 text-left text-xs ${
+                index === selectedIndex
+                  ? 'bg-accent text-white'
+                  : 'text-text-primary hover:bg-accent-subtle'
+              }`}
+              style={{ top: index * OBD_LIST_ITEM_HEIGHT }}
+              onClick={() => onSelect(index)}
+            >
+              <ObdFileThumbnail filePath={file.path} label={file.name} />
+              <span className="truncate">{file.name}</span>
+            </button>
+          )
+        })}
+      </div>
     </div>
   )
 }
@@ -370,25 +637,50 @@ function ObjectViewerContent({
     if (!active) return
 
     const handleKeyDown = (event: KeyboardEvent): void => {
+      const target = event.target as HTMLElement | null
+      const isEditableTarget =
+        target instanceof HTMLInputElement ||
+        target instanceof HTMLTextAreaElement ||
+        target instanceof HTMLSelectElement ||
+        target?.isContentEditable === true
+
+      if (isEditableTarget) {
+        return
+      }
+
       if (event.ctrlKey || event.metaKey) {
         if (event.key === 'o') {
           event.preventDefault()
           void handleOpenObdFiles()
         }
-      } else if (sourceMode === 'obd' && obdFiles.length > 1) {
-        if (event.key === 'ArrowLeft') {
+      } else if (sourceMode === 'obd' && obdFiles.length > 0) {
+        if (event.key === 'ArrowUp' || event.key === 'ArrowLeft') {
           event.preventDefault()
           handlePrevious()
-        } else if (event.key === 'ArrowRight') {
+        } else if (event.key === 'ArrowDown' || event.key === 'ArrowRight') {
           event.preventDefault()
           handleNext()
+        } else if (event.key === 'Home') {
+          event.preventDefault()
+          void handleObdSelect(0)
+        } else if (event.key === 'End') {
+          event.preventDefault()
+          void handleObdSelect(obdFiles.length - 1)
         }
       }
     }
 
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [active, handleNext, handleOpenObdFiles, handlePrevious, obdFiles.length, sourceMode])
+  }, [
+    active,
+    handleNext,
+    handleObdSelect,
+    handleOpenObdFiles,
+    handlePrevious,
+    obdFiles.length,
+    sourceMode
+  ])
 
   const statusText = useMemo(() => {
     if (!thingData) return ''
