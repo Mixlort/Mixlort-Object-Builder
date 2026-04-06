@@ -30,12 +30,15 @@ const PLAYBACK_FORWARD = 0
 const PLAYBACK_BACKWARD = 1
 
 function resolvePreviewFrameDuration(frameGroup: FrameGroup, frameIndex: number): number {
+  const sanitizeDuration = (value: number): number =>
+    Number.isFinite(value) && value > 0 ? value : DEFAULT_FRAME_DURATION_MS
+
   if (
     frameGroup.frameDurations &&
     frameIndex >= 0 &&
     frameIndex < frameGroup.frameDurations.length
   ) {
-    return getFrameDurationValue(frameGroup.frameDurations[frameIndex])
+    return sanitizeDuration(getFrameDurationValue(frameGroup.frameDurations[frameIndex]))
   }
 
   return DEFAULT_FRAME_DURATION_MS

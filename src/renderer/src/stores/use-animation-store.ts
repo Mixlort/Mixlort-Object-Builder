@@ -135,8 +135,11 @@ function spritesPerFrame(fg: FrameGroup): number {
 
 /** Get a resolved frame duration value for a specific frame. */
 function resolveFrameDuration(fg: FrameGroup, frameIndex: number): number {
+  const sanitizeDuration = (value: number): number =>
+    Number.isFinite(value) && value > 0 ? value : DEFAULT_FRAME_DURATION_MS
+
   if (fg.frameDurations && frameIndex >= 0 && frameIndex < fg.frameDurations.length) {
-    return getFrameDurationValue(fg.frameDurations[frameIndex])
+    return sanitizeDuration(getFrameDurationValue(fg.frameDurations[frameIndex]))
   }
   return DEFAULT_FRAME_DURATION_MS
 }

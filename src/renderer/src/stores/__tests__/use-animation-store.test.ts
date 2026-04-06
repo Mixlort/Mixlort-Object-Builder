@@ -140,6 +140,15 @@ describe('setFrameGroup', () => {
     expect(state().playbackDirection).toBe(PlaybackDirection.FORWARD)
   })
 
+  it('clamps invalid frame durations to the default playback duration', () => {
+    const fg = makeFrameGroup(2)
+    fg.frameDurations = [createFrameDuration(0, 0), createFrameDuration(0, 0)]
+
+    state().setFrameGroup(fg)
+
+    expect(state().currentFrameRemaining).toBe(100)
+  })
+
   it('sets frame group type from parameter', () => {
     const fg = makeFrameGroup(3)
     state().setFrameGroup(fg, FrameGroupType.WALKING)
