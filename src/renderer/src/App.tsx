@@ -1790,6 +1790,7 @@ export function App(): React.JSX.Element {
             rightMinWidth={190}
             rightMaxWidth={700}
             showLeft={ui.showThingsPanel}
+            showCenter={ui.showEditorPanel}
             showRight={ui.showSpritesPanel}
             onLeftWidthChange={(w) => setPanelWidth('thingList', w)}
             onRightWidthChange={(w) => setPanelWidth('sprites', w)}

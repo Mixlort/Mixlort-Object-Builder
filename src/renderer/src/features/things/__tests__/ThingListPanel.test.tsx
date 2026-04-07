@@ -7,7 +7,7 @@
 import React from 'react'
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { render, screen, fireEvent, act, createEvent } from '@testing-library/react'
-import { ThingListPanel } from '../ThingListPanel'
+import { ThingListPanel, getGridMetrics } from '../ThingListPanel'
 import { resetAppStore, useAppStore, resetEditorStore } from '../../../stores'
 import { ThingCategory, createThingType, createClientInfo } from '../../../types'
 import type { ThingType } from '../../../types'
@@ -69,6 +69,13 @@ beforeEach(() => {
 // ---------------------------------------------------------------------------
 
 describe('ThingListPanel', () => {
+  describe('grid metrics', () => {
+    it('increases the number of columns when the panel becomes very wide', () => {
+      expect(getGridMetrics(280).columns).toBe(2)
+      expect(getGridMetrics(1200).columns).toBeGreaterThan(6)
+    })
+  })
+
   // -----------------------------------------------------------------------
   // Basic rendering
   // -----------------------------------------------------------------------

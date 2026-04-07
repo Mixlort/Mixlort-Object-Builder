@@ -261,6 +261,8 @@ describe('Toolbar', () => {
     expect(screen.getByTitle('Object Viewer')).toBeInTheDocument()
     expect(screen.getByTitle('Sprites')).toBeInTheDocument()
     expect(screen.getByTitle('Animation Editor')).toBeInTheDocument()
+    expect(screen.getByTestId('toolbar-toggle-editor-panel')).toBeInTheDocument()
+    expect(screen.getByTestId('toolbar-toggle-sprite-panel')).toBeInTheDocument()
     expect(screen.getByTitle(/Log Window/)).toBeInTheDocument()
   })
 
@@ -579,6 +581,12 @@ describe('App layout', () => {
     expect(screen.queryByText('Sprites')).not.toBeInTheDocument()
   })
 
+  it('hides item editor panel when toggled', () => {
+    useAppStore.getState().togglePanel('editor')
+    render(<App />)
+    expect(screen.queryByText('Edit')).not.toBeInTheDocument()
+  })
+
   it('shows all panels by default', () => {
     render(<App />)
     expect(screen.getByTestId('thing-list-panel')).toBeInTheDocument()
@@ -593,5 +601,31 @@ describe('App layout', () => {
     expect(screen.getByText('Log Window')).toBeInTheDocument()
     fireEvent.click(screen.getByTitle(/Log Window/))
     expect(screen.queryByText('Log Window')).not.toBeInTheDocument()
+  })
+
+  it('toggles item editor panel via toolbar button', () => {
+    const clientInfo = createClientInfo()
+    clientInfo.loaded = true
+    useAppStore.getState().setProjectLoaded({ loaded: true, clientInfo })
+    render(<App />)
+
+    expect(screen.getAllByText('Edit').length).toBeGreaterThanOrEqual(1)
+    fireEvent.click(screen.getByTestId('toolbar-toggle-editor-panel'))
+    expect(screen.queryByText('Edit')).not.toBeInTheDocument()
+    fireEvent.click(screen.getByTestId('toolbar-toggle-editor-panel'))
+    expect(screen.getAllByText('Edit').length).toBeGreaterThanOrEqual(1)
+  })
+
+  it('toggles sprite panel via toolbar button', () => {
+    const clientInfo = createClientInfo()
+    clientInfo.loaded = true
+    useAppStore.getState().setProjectLoaded({ loaded: true, clientInfo })
+    render(<App />)
+
+    expect(screen.getByTestId('sprite-panel')).toBeInTheDocument()
+    fireEvent.click(screen.getByTestId('toolbar-toggle-sprite-panel'))
+    expect(screen.queryByTestId('sprite-panel')).not.toBeInTheDocument()
+    fireEvent.click(screen.getByTestId('toolbar-toggle-sprite-panel'))
+    expect(screen.getByTestId('sprite-panel')).toBeInTheDocument()
   })
 })

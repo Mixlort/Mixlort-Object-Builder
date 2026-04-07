@@ -30,6 +30,7 @@ import { uncompressPixels, argbToRgba, rgbaToArgb, compressPixels } from '../../
 import { createSpriteData } from '../../types/sprites'
 import { cloneThingType } from '../../types/things'
 import { PaginationStepper } from '../../components/PaginationStepper'
+import { IconClose } from '../../components/Icons'
 import { useTranslation } from 'react-i18next'
 import { compareFileNamesNaturally } from '../../utils'
 
@@ -288,6 +289,7 @@ export function SpritePanel({
   pageSize = DEFAULT_SPRITE_PAGE_SIZE
 }: SpritePanelProps): React.JSX.Element {
   const { t } = useTranslation()
+  const togglePanel = useAppStore((s) => s.togglePanel)
   const [selectedSlot, setSelectedSlot] = useState<number | null>(null)
   const [selectedSlots, setSelectedSlots] = useState<number[]>([])
   const [hoveredSlot, setHoveredSlot] = useState<number | null>(null)
@@ -1025,7 +1027,15 @@ export function SpritePanel({
     return (
       <div className="flex h-full flex-col bg-bg-secondary" data-testid="sprite-panel">
         <div className="flex h-7 items-center border-b border-border px-2">
-          <span className="text-xs font-medium text-text-secondary">{t('labels.sprites')}</span>
+          <span className="flex-1 text-xs font-medium text-text-secondary">{t('labels.sprites')}</span>
+          <button
+            type="button"
+            className="flex h-6 w-6 items-center justify-center rounded-full text-text-secondary transition-colors hover:bg-bg-hover hover:text-text-primary"
+            title="Hide Sprite Panel"
+            onClick={() => togglePanel('sprites')}
+          >
+            <IconClose size={14} />
+          </button>
         </div>
         <div className="flex flex-1 items-center justify-center">
           <span className="text-xs text-text-secondary">No object selected</span>
@@ -1054,17 +1064,27 @@ export function SpritePanel({
           {t('labels.sprites')}
           {spriteSlots.length > 0 ? ` (${spriteSlots.length})` : ''}
         </span>
-        {isOutfit && hasWalkingGroup && (
-          <select
-            className="h-5 rounded border border-border bg-bg-primary px-1 text-[10px] text-text-primary outline-none focus:border-accent"
-            value={frameGroupType}
-            onChange={handleFrameGroupChange}
-            data-testid="frame-group-select"
+        <div className="flex items-center gap-1">
+          {isOutfit && hasWalkingGroup && (
+            <select
+              className="h-5 rounded border border-border bg-bg-primary px-1 text-[10px] text-text-primary outline-none focus:border-accent"
+              value={frameGroupType}
+              onChange={handleFrameGroupChange}
+              data-testid="frame-group-select"
+            >
+              <option value={FrameGroupType.DEFAULT}>{t('thingType.idle')}</option>
+              <option value={FrameGroupType.WALKING}>{t('thingType.walking')}</option>
+            </select>
+          )}
+          <button
+            type="button"
+            className="flex h-6 w-6 items-center justify-center rounded-full text-text-secondary transition-colors hover:bg-bg-hover hover:text-text-primary"
+            title="Hide Sprite Panel"
+            onClick={() => togglePanel('sprites')}
           >
-            <option value={FrameGroupType.DEFAULT}>{t('thingType.idle')}</option>
-            <option value={FrameGroupType.WALKING}>{t('thingType.walking')}</option>
-          </select>
-        )}
+            <IconClose size={14} />
+          </button>
+        </div>
       </div>
 
       {/* Pagination stepper (only shown when needed) */}

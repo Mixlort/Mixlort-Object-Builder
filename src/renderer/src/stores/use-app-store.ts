@@ -84,6 +84,7 @@ function getThingsKey(category: ThingCategory): keyof ThingsMap {
 export interface UIState {
   showPreviewPanel: boolean
   showThingsPanel: boolean
+  showEditorPanel: boolean
   showSpritesPanel: boolean
   showLogPanel: boolean
   previewContainerWidth: number
@@ -96,6 +97,7 @@ export function createUIState(): UIState {
   return {
     showPreviewPanel: true,
     showThingsPanel: true,
+    showEditorPanel: true,
     showSpritesPanel: true,
     showLogPanel: true,
     previewContainerWidth: 220,
@@ -109,7 +111,7 @@ export function createUIState(): UIState {
 // Panel keys for panel actions
 // ---------------------------------------------------------------------------
 
-export type PanelKey = 'preview' | 'things' | 'sprites' | 'log'
+export type PanelKey = 'preview' | 'things' | 'editor' | 'sprites' | 'log'
 export type PanelWidthKey = 'preview' | 'thingList' | 'sprites'
 
 // ---------------------------------------------------------------------------
@@ -195,6 +197,8 @@ function panelStateKey(panel: PanelKey): keyof UIState {
       return 'showPreviewPanel'
     case 'things':
       return 'showThingsPanel'
+    case 'editor':
+      return 'showEditorPanel'
     case 'sprites':
       return 'showSpritesPanel'
     case 'log':

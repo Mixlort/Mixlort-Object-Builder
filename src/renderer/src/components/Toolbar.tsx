@@ -13,6 +13,7 @@ import {
   MENU_FILE_OPEN,
   MENU_FILE_COMPILE,
   MENU_FILE_COMPILE_AS,
+  MENU_VIEW_SHOW_SPRITES,
   MENU_TOOLS_OBJECT_VIEWER,
   MENU_TOOLS_SLICER,
   MENU_TOOLS_ANIMATION_EDITOR,
@@ -26,6 +27,7 @@ import {
   IconSave,
   IconSaveAs,
   IconViewer,
+  IconGrid,
   IconSlicer,
   IconAnimation,
   IconLog
@@ -39,6 +41,8 @@ interface ToolbarButtonProps {
   icon: React.ReactNode
   title: string
   disabled?: boolean
+  active?: boolean
+  testId?: string
   onClick: () => void
 }
 
@@ -46,14 +50,21 @@ function ToolbarButton({
   icon,
   title,
   disabled = false,
+  active = false,
+  testId,
   onClick
 }: ToolbarButtonProps): React.JSX.Element {
   return (
     <button
-      className="flex h-8 w-8 items-center justify-center rounded-full text-text-secondary transition-all duration-150 hover:bg-bg-hover hover:text-text-primary active:bg-border disabled:opacity-38 disabled:hover:bg-transparent disabled:hover:text-text-secondary"
+      className={`flex h-8 w-8 items-center justify-center rounded-full transition-all duration-150 ${
+        active
+          ? 'bg-bg-tertiary text-text-primary'
+          : 'text-text-secondary hover:bg-bg-hover hover:text-text-primary active:bg-border'
+      } disabled:opacity-38 disabled:hover:bg-transparent disabled:hover:text-text-secondary`}
       title={title}
       disabled={disabled}
       onClick={onClick}
+      data-testid={testId}
     >
       {icon}
     </button>
@@ -75,6 +86,10 @@ interface ToolbarProps {
 export function Toolbar({ onAction }: ToolbarProps): React.JSX.Element {
   const { t } = useTranslation()
   const isLoaded = useAppStore(selectIsProjectLoaded)
+  const showEditorPanel = useAppStore((s) => s.ui.showEditorPanel)
+  const showSpritesPanel = useAppStore((s) => s.ui.showSpritesPanel)
+  const showLogPanel = useAppStore((s) => s.ui.showLogPanel)
+  const togglePanel = useAppStore((s) => s.togglePanel)
 
   const dispatch = (action: MenuAction): void => onAction?.(action)
 
@@ -128,10 +143,28 @@ export function Toolbar({ onAction }: ToolbarProps): React.JSX.Element {
 
       <ToolbarSeparator />
 
+      {/* Panel visibility */}
+      <ToolbarButton
+        icon={<IconViewer size={16} />}
+        title={showEditorPanel ? 'Hide Item Panel' : 'Show Item Panel'}
+        active={showEditorPanel}
+        disabled={!isLoaded}
+        testId="toolbar-toggle-editor-panel"
+        onClick={() => togglePanel('editor')}
+      />
+      <ToolbarButton
+        icon={<IconGrid size={16} />}
+        title={showSpritesPanel ? 'Hide Sprite Panel' : 'Show Sprite Panel'}
+        active={showSpritesPanel}
+        disabled={!isLoaded}
+        testId="toolbar-toggle-sprite-panel"
+        onClick={() => dispatch(MENU_VIEW_SHOW_SPRITES)}
+      />
       {/* Utilities */}
       <ToolbarButton
         icon={<IconLog size={16} />}
-        title={`${t('controls.logWindow')} (Ctrl+L)`}
+        title={showLogPanel ? `${t('controls.logWindow')} (Ctrl+L)` : 'Show Log Window'}
+        active={showLogPanel}
         onClick={() => dispatch(MENU_WINDOW_LOG)}
       />
     </div>

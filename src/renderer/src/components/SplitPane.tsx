@@ -27,6 +27,7 @@ interface SplitPaneProps {
   rightMinWidth?: number
   rightMaxWidth?: number
   showLeft?: boolean
+  showCenter?: boolean
   showRight?: boolean
   onLeftWidthChange?: (width: number) => void
   onRightWidthChange?: (width: number) => void
@@ -55,6 +56,7 @@ export function SplitPane({
   rightMinWidth = 190,
   rightMaxWidth = 700,
   showLeft = true,
+  showCenter = true,
   showRight = true,
   onLeftWidthChange,
   onRightWidthChange
@@ -149,23 +151,27 @@ export function SplitPane({
       {showLeft && (
         <>
           <div
-            className="h-full shrink-0 overflow-hidden"
-            style={{ width: leftWidth }}
+            className={showCenter ? 'h-full shrink-0 overflow-hidden' : 'h-full min-w-0 flex-1 overflow-hidden'}
+            style={showCenter ? { width: leftWidth } : undefined}
             data-testid="split-left"
           >
             {left}
           </div>
-          <div
-            className="h-full w-1 shrink-0 cursor-col-resize bg-border-subtle transition-colors hover:bg-accent"
-            onMouseDown={(e) => handleMouseDown('left', e)}
-            data-testid="split-handle-left"
-          />
+          {showCenter && (
+            <div
+              className="h-full w-1 shrink-0 cursor-col-resize bg-border-subtle transition-colors hover:bg-accent"
+              onMouseDown={(e) => handleMouseDown('left', e)}
+              data-testid="split-handle-left"
+            />
+          )}
         </>
       )}
 
-      <div className="h-full min-w-0 flex-1 overflow-hidden" data-testid="split-center">
-        {center}
-      </div>
+      {showCenter && (
+        <div className="h-full min-w-0 flex-1 overflow-hidden" data-testid="split-center">
+          {center}
+        </div>
+      )}
 
       {showRight && (
         <>
@@ -175,8 +181,8 @@ export function SplitPane({
             data-testid="split-handle-right"
           />
           <div
-            className="h-full shrink-0 overflow-hidden"
-            style={{ width: rightWidth }}
+            className={!showCenter && !showLeft ? 'h-full min-w-0 flex-1 overflow-hidden' : 'h-full shrink-0 overflow-hidden'}
+            style={!showCenter && !showLeft ? undefined : { width: rightWidth }}
             data-testid="split-right"
           >
             {right}

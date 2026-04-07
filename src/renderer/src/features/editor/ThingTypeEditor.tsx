@@ -11,6 +11,7 @@ import { useTranslation } from 'react-i18next'
 import { useEditorStore, selectEditingThingData } from '../../stores/use-editor-store'
 import { useAppStore } from '../../stores/use-app-store'
 import { useSpriteStore } from '../../stores/use-sprite-store'
+import { IconClose } from '../../components/Icons'
 import {
   ThingCategory,
   type ThingType,
@@ -1726,6 +1727,7 @@ export function ThingTypeEditor(): React.JSX.Element {
   const thingData = useEditorStore(selectEditingThingData)
   const editingChanged = useEditorStore((s) => s.editingChanged)
   const setEditingThingData = useEditorStore((s) => s.setEditingThingData)
+  const togglePanel = useAppStore((s) => s.togglePanel)
   const setEditingChanged = useEditorStore((s) => s.setEditingChanged)
   const clientInfo = useAppStore((s) => s.clientInfo)
   const updateThing = useAppStore((s) => s.updateThing)
@@ -1749,8 +1751,16 @@ export function ThingTypeEditor(): React.JSX.Element {
   if (!thingData) {
     return (
       <div className="flex h-full flex-col bg-bg-primary">
-        <div className="flex h-7 items-center border-b border-border px-2">
-          <span className="text-xs font-medium text-text-secondary">{t('labels.edit')}</span>
+      <div className="flex h-7 items-center border-b border-border px-2">
+          <span className="flex-1 text-xs font-medium text-text-secondary">{t('labels.edit')}</span>
+          <button
+            type="button"
+            className="flex h-6 w-6 items-center justify-center rounded-full text-text-secondary transition-colors hover:bg-bg-hover hover:text-text-primary"
+            title="Hide Item Panel"
+            onClick={() => togglePanel('editor')}
+          >
+            <IconClose size={14} />
+          </button>
         </div>
         <div className="flex flex-1 items-center justify-center">
           <span className="text-xs text-text-secondary">{t('labels.edit')}</span>
@@ -1777,9 +1787,17 @@ export function ThingTypeEditor(): React.JSX.Element {
     <div className="flex h-full flex-col bg-bg-primary">
       {/* Header */}
       <div className="flex h-7 shrink-0 items-center border-b border-border bg-bg-secondary px-2">
-        <span className="text-xs font-medium text-text-primary">
+        <span className="flex-1 text-xs font-medium text-text-primary">
           {categoryLabel} #{thing.id}
         </span>
+        <button
+          type="button"
+          className="flex h-6 w-6 items-center justify-center rounded-full text-text-secondary transition-colors hover:bg-bg-hover hover:text-text-primary"
+          title="Hide Item Panel"
+          onClick={() => togglePanel('editor')}
+        >
+          <IconClose size={14} />
+        </button>
       </div>
 
       {/* Tab bar */}
