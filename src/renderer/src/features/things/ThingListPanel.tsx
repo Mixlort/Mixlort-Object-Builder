@@ -64,6 +64,7 @@ const LIST_ITEM_HEIGHT = 40
 const GRID_GAP = 4
 const GRID_PADDING = 4
 const GRID_FALLBACK_WIDTH = 220
+const GRID_MAX_COLUMNS = 6
 const GRID_THREE_COLUMN_MIN_CARD_WIDTH = 92
 const OVERSCAN = 5
 
@@ -144,10 +145,20 @@ interface GridMetrics {
 
 function getGridMetrics(containerWidth: number): GridMetrics {
   const effectiveWidth = Math.max(containerWidth, GRID_FALLBACK_WIDTH)
-  const estimatedThreeColumnCardWidth =
-    Math.floor((effectiveWidth - GRID_PADDING * 2 - GRID_GAP * 2) / 3) - 4
-  const columns =
-    estimatedThreeColumnCardWidth >= GRID_THREE_COLUMN_MIN_CARD_WIDTH ? 3 : 2
+  let columns = 2
+
+  for (let candidate = GRID_MAX_COLUMNS; candidate >= 3; candidate--) {
+    const estimatedCardWidth =
+      Math.floor(
+        (effectiveWidth - GRID_PADDING * 2 - GRID_GAP * (candidate - 1)) / candidate
+      ) - 4
+
+    if (estimatedCardWidth >= GRID_THREE_COLUMN_MIN_CARD_WIDTH) {
+      columns = candidate
+      break
+    }
+  }
+
   const totalGap = GRID_GAP * (columns - 1)
   const availableWidth = effectiveWidth - GRID_PADDING * 2 - totalGap
   const columnWidth = Math.max(72, Math.floor(availableWidth / columns))

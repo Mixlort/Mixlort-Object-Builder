@@ -1771,6 +1771,7 @@ export function App(): React.JSX.Element {
           <SplitPane
             farLeft={<PreviewPanel />}
             farLeftWidth={ui.previewContainerWidth}
+            farLeftMaxWidth={700}
             showFarLeft={ui.showPreviewPanel}
             onFarLeftWidthChange={(w) => setPanelWidth('preview', w)}
             left={
@@ -1785,9 +1786,9 @@ export function App(): React.JSX.Element {
             leftWidth={ui.thingListContainerWidth}
             rightWidth={ui.spritesContainerWidth}
             leftMinWidth={190}
-            leftMaxWidth={400}
+            leftMaxWidth={700}
             rightMinWidth={190}
-            rightMaxWidth={400}
+            rightMaxWidth={700}
             showLeft={ui.showThingsPanel}
             showRight={ui.showSpritesPanel}
             onLeftWidthChange={(w) => setPanelWidth('thingList', w)}
