@@ -110,18 +110,18 @@ describe('ThingListPanel', () => {
     it('renders items when project is loaded', () => {
       loadProjectWithThings()
       render(<ThingListPanel />)
-      expect(screen.getByTestId('thing-list-item-100')).toBeInTheDocument()
-      expect(screen.getByTestId('thing-list-item-101')).toBeInTheDocument()
+      expect(screen.getByTestId('thing-grid-item-100')).toBeInTheDocument()
+      expect(screen.getByTestId('thing-grid-item-101')).toBeInTheDocument()
     })
 
     it('respects the configured page size for objects', () => {
       loadProjectWithThings(8)
       render(<ThingListPanel pageSize={3} />)
 
-      expect(screen.getByTestId('thing-list-item-100')).toBeInTheDocument()
-      expect(screen.getByTestId('thing-list-item-101')).toBeInTheDocument()
-      expect(screen.getByTestId('thing-list-item-102')).toBeInTheDocument()
-      expect(screen.queryByTestId('thing-list-item-103')).not.toBeInTheDocument()
+      expect(screen.getByTestId('thing-grid-item-100')).toBeInTheDocument()
+      expect(screen.getByTestId('thing-grid-item-101')).toBeInTheDocument()
+      expect(screen.getByTestId('thing-grid-item-102')).toBeInTheDocument()
+      expect(screen.queryByTestId('thing-grid-item-103')).not.toBeInTheDocument()
     })
 
     it('shows pagination stepper in footer when project is loaded', () => {
@@ -143,14 +143,29 @@ describe('ThingListPanel', () => {
       render(<ThingListPanel />)
 
       // Initially shows items (3 items starting at ID 100)
-      expect(screen.getByTestId('thing-list-item-100')).toBeInTheDocument()
-      expect(screen.getByTestId('thing-list-item-102')).toBeInTheDocument()
+      expect(screen.getByTestId('thing-grid-item-100')).toBeInTheDocument()
+      expect(screen.getByTestId('thing-grid-item-102')).toBeInTheDocument()
 
       // Switch to outfits (2 outfits starting at ID 1)
       fireEvent.click(screen.getByTestId('category-tab-outfit'))
-      expect(screen.getByTestId('thing-list-item-1')).toBeInTheDocument()
-      expect(screen.getByTestId('thing-list-item-2')).toBeInTheDocument()
-      expect(screen.queryByTestId('thing-list-item-100')).not.toBeInTheDocument()
+      expect(screen.getByTestId('thing-grid-item-1')).toBeInTheDocument()
+      expect(screen.getByTestId('thing-grid-item-2')).toBeInTheDocument()
+      expect(screen.queryByTestId('thing-grid-item-100')).not.toBeInTheDocument()
+    })
+
+    it('resets the scroll position when switching categories', () => {
+      loadProjectWithThings(10, 2)
+      render(<ThingListPanel />)
+
+      const scrollContainer = screen.getByTestId('thing-list-scroll')
+      scrollContainer.scrollTop = 160
+      fireEvent.scroll(scrollContainer)
+
+      fireEvent.click(screen.getByTestId('category-tab-outfit'))
+
+      expect(scrollContainer.scrollTop).toBe(0)
+      expect(screen.getByTestId('thing-grid-item-1')).toBeInTheDocument()
+      expect(screen.queryByTestId('thing-grid-item-100')).not.toBeInTheDocument()
     })
 
     it('disables category tabs when no project is loaded', () => {
@@ -172,11 +187,10 @@ describe('ThingListPanel', () => {
   // -----------------------------------------------------------------------
 
   describe('view modes', () => {
-    it('renders in list mode by default', () => {
+    it('renders in grid mode by default', () => {
       loadProjectWithThings()
       render(<ThingListPanel />)
-      // List items have thing-list-item-* test ids
-      expect(screen.getByTestId('thing-list-item-100')).toBeInTheDocument()
+      expect(screen.getByTestId('thing-grid-item-100')).toBeInTheDocument()
     })
 
     it('switches to grid view', () => {
@@ -184,8 +198,14 @@ describe('ThingListPanel', () => {
       render(<ThingListPanel />)
 
       fireEvent.click(screen.getByTestId('view-mode-grid'))
-      // Grid items have thing-grid-item-* test ids
-      expect(screen.getByTestId('thing-grid-item-100')).toBeInTheDocument()
+      const firstItem = screen.getByTestId('thing-grid-item-100')
+      const secondItem = screen.getByTestId('thing-grid-item-101')
+
+      expect(firstItem).toBeInTheDocument()
+      expect(secondItem).toBeInTheDocument()
+      expect(firstItem.style.top).toBe(secondItem.style.top)
+      expect(firstItem.style.left).not.toBe(secondItem.style.left)
+      expect(Number.parseFloat(firstItem.style.width)).toBeGreaterThan(64)
     })
 
     it('switches back to list view', () => {
@@ -215,8 +235,8 @@ describe('ThingListPanel', () => {
         vi.advanceTimersByTime(200)
       })
 
-      expect(screen.getByTestId('thing-list-item-102')).toBeInTheDocument()
-      expect(screen.queryByTestId('thing-list-item-100')).not.toBeInTheDocument()
+      expect(screen.getByTestId('thing-grid-item-102')).toBeInTheDocument()
+      expect(screen.queryByTestId('thing-grid-item-100')).not.toBeInTheDocument()
       vi.useRealTimers()
     })
 
@@ -251,8 +271,8 @@ describe('ThingListPanel', () => {
         vi.advanceTimersByTime(200)
       })
 
-      expect(screen.getByTestId('thing-list-item-100')).toBeInTheDocument()
-      expect(screen.queryByTestId('thing-list-item-101')).not.toBeInTheDocument()
+      expect(screen.getByTestId('thing-grid-item-100')).toBeInTheDocument()
+      expect(screen.queryByTestId('thing-grid-item-101')).not.toBeInTheDocument()
       vi.useRealTimers()
     })
 
@@ -304,7 +324,7 @@ describe('ThingListPanel', () => {
       loadProjectWithThings()
       render(<ThingListPanel />)
 
-      fireEvent.click(screen.getByTestId('thing-list-item-101'))
+      fireEvent.click(screen.getByTestId('thing-grid-item-101'))
       expect(useAppStore.getState().selectedThingId).toBe(101)
       expect(useAppStore.getState().selectedThingIds).toEqual([101])
     })
@@ -313,8 +333,8 @@ describe('ThingListPanel', () => {
       loadProjectWithThings()
       render(<ThingListPanel />)
 
-      fireEvent.click(screen.getByTestId('thing-list-item-100'))
-      fireEvent.click(screen.getByTestId('thing-list-item-102'), { ctrlKey: true })
+      fireEvent.click(screen.getByTestId('thing-grid-item-100'))
+      fireEvent.click(screen.getByTestId('thing-grid-item-102'), { ctrlKey: true })
 
       expect(useAppStore.getState().selectedThingIds).toEqual([100, 102])
     })
@@ -323,8 +343,8 @@ describe('ThingListPanel', () => {
       loadProjectWithThings(5)
       render(<ThingListPanel />)
 
-      fireEvent.click(screen.getByTestId('thing-list-item-100'))
-      fireEvent.click(screen.getByTestId('thing-list-item-103'), { shiftKey: true })
+      fireEvent.click(screen.getByTestId('thing-grid-item-100'))
+      fireEvent.click(screen.getByTestId('thing-grid-item-103'), { shiftKey: true })
 
       expect(useAppStore.getState().selectedThingIds).toEqual([100, 101, 102, 103])
     })
@@ -333,9 +353,9 @@ describe('ThingListPanel', () => {
       loadProjectWithThings()
       render(<ThingListPanel />)
 
-      fireEvent.click(screen.getByTestId('thing-list-item-100'))
-      fireEvent.click(screen.getByTestId('thing-list-item-101'), { ctrlKey: true })
-      fireEvent.click(screen.getByTestId('thing-list-item-100'), { ctrlKey: true })
+      fireEvent.click(screen.getByTestId('thing-grid-item-100'))
+      fireEvent.click(screen.getByTestId('thing-grid-item-101'), { ctrlKey: true })
+      fireEvent.click(screen.getByTestId('thing-grid-item-100'), { ctrlKey: true })
 
       expect(useAppStore.getState().selectedThingIds).toEqual([101])
     })
@@ -350,7 +370,7 @@ describe('ThingListPanel', () => {
       loadProjectWithThings()
       render(<ThingListPanel />)
 
-      fireEvent.contextMenu(screen.getByTestId('thing-list-item-100'))
+      fireEvent.contextMenu(screen.getByTestId('thing-grid-item-100'))
       expect(screen.getByTestId('thing-context-menu')).toBeInTheDocument()
     })
 
@@ -358,7 +378,7 @@ describe('ThingListPanel', () => {
       loadProjectWithThings()
       render(<ThingListPanel />)
 
-      fireEvent.contextMenu(screen.getByTestId('thing-list-item-102'))
+      fireEvent.contextMenu(screen.getByTestId('thing-grid-item-102'))
       expect(useAppStore.getState().selectedThingId).toBe(102)
     })
 
@@ -366,7 +386,7 @@ describe('ThingListPanel', () => {
       loadProjectWithThings()
       render(<ThingListPanel />)
 
-      fireEvent.contextMenu(screen.getByTestId('thing-list-item-100'))
+      fireEvent.contextMenu(screen.getByTestId('thing-grid-item-100'))
 
       expect(screen.getByText('Replace')).toBeInTheDocument()
       expect(screen.getByText('Export')).toBeInTheDocument()
@@ -381,7 +401,7 @@ describe('ThingListPanel', () => {
       loadProjectWithThings()
       render(<ThingListPanel />)
 
-      fireEvent.contextMenu(screen.getByTestId('thing-list-item-100'))
+      fireEvent.contextMenu(screen.getByTestId('thing-grid-item-100'))
       expect(screen.getByTestId('thing-context-menu')).toBeInTheDocument()
 
       fireEvent.keyDown(document, { key: 'Escape' })
@@ -479,7 +499,7 @@ describe('ThingListPanel', () => {
       loadProjectWithThings()
       render(<ThingListPanel />)
 
-      fireEvent.click(screen.getByTestId('thing-list-item-100'))
+      fireEvent.click(screen.getByTestId('thing-grid-item-100'))
 
       expect(screen.getByTestId('action-replace')).not.toBeDisabled()
       expect(screen.getByTestId('action-export')).not.toBeDisabled()
@@ -492,8 +512,8 @@ describe('ThingListPanel', () => {
       loadProjectWithThings()
       render(<ThingListPanel />)
 
-      fireEvent.click(screen.getByTestId('thing-list-item-100'))
-      fireEvent.click(screen.getByTestId('thing-list-item-101'), { ctrlKey: true })
+      fireEvent.click(screen.getByTestId('thing-grid-item-100'))
+      fireEvent.click(screen.getByTestId('thing-grid-item-101'), { ctrlKey: true })
 
       expect(screen.getByTestId('action-edit')).toBeDisabled()
       // Replace/Export/Duplicate/Remove still enabled
@@ -504,10 +524,10 @@ describe('ThingListPanel', () => {
       loadProjectWithThings()
       render(<ThingListPanel />)
 
-      fireEvent.click(screen.getByTestId('thing-list-item-101'))
+      fireEvent.click(screen.getByTestId('thing-grid-item-101'))
       fireEvent.click(screen.getByTestId('action-remove'))
 
-      expect(screen.getByTestId('thing-list-item-101')).toBeInTheDocument()
+      expect(screen.getByTestId('thing-grid-item-101')).toBeInTheDocument()
       expect(useAppStore.getState().things.items).toHaveLength(5)
       expect(useAppStore.getState().getThingById(ThingCategory.ITEM, 101)).toBeTruthy()
     })
@@ -516,10 +536,10 @@ describe('ThingListPanel', () => {
       loadProjectWithThings()
       render(<ThingListPanel />)
 
-      fireEvent.click(screen.getByTestId('thing-list-item-104'))
+      fireEvent.click(screen.getByTestId('thing-grid-item-104'))
       fireEvent.click(screen.getByTestId('action-remove'))
 
-      expect(screen.queryByTestId('thing-list-item-104')).not.toBeInTheDocument()
+      expect(screen.queryByTestId('thing-grid-item-104')).not.toBeInTheDocument()
       expect(useAppStore.getState().things.items).toHaveLength(4)
       expect(useAppStore.getState().getThingById(ThingCategory.ITEM, 104)).toBeUndefined()
     })
@@ -536,7 +556,7 @@ describe('ThingListPanel', () => {
       const onEditThing = vi.fn()
       render(<ThingListPanel onEditThing={onEditThing} />)
 
-      fireEvent.doubleClick(screen.getByTestId('thing-list-item-100'))
+      fireEvent.doubleClick(screen.getByTestId('thing-grid-item-100'))
       expect(onEditThing).toHaveBeenCalledWith(100)
     })
   })
@@ -566,6 +586,7 @@ describe('ThingListPanel', () => {
       })
 
       render(<ThingListPanel />)
+      fireEvent.click(screen.getByTestId('view-mode-list'))
       expect(screen.getByText('100 - Golden Armor')).toBeInTheDocument()
     })
 
@@ -589,6 +610,7 @@ describe('ThingListPanel', () => {
       })
 
       render(<ThingListPanel />)
+      fireEvent.click(screen.getByTestId('view-mode-list'))
       expect(screen.getByTestId('thing-list-item-100')).toHaveTextContent('100')
     })
   })

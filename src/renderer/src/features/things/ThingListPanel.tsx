@@ -61,8 +61,10 @@ import { debounce } from '../../utils/debounce'
 // ---------------------------------------------------------------------------
 
 const LIST_ITEM_HEIGHT = 40
-const GRID_CELL_WIDTH = 64
-const GRID_CELL_HEIGHT = 71
+const GRID_COLUMNS = 2
+const GRID_GAP = 8
+const GRID_PADDING = 8
+const GRID_FALLBACK_WIDTH = 220
 const OVERSCAN = 5
 
 /** Default page size matching legacy objectsListAmount setting */
@@ -95,24 +97,26 @@ const CHECKERBOARD_STYLE = {
 
 function SpriteThumbnail({
   thing,
-  category
+  category,
+  sizeClassName = 'h-8 w-8'
 }: {
   thing: ThingType
   category: ThingCategory
+  sizeClassName?: string
 }): React.JSX.Element {
   const dataUrl = useSpriteThumbnail(thing, category)
   if (dataUrl) {
     return (
       <img
         src={dataUrl}
-        className="h-8 w-8 shrink-0 rounded-sm object-contain"
+        className={`${sizeClassName} shrink-0 rounded-sm object-contain`}
         style={{ imageRendering: 'pixelated' }}
         alt=""
       />
     )
   }
   return (
-    <div className="h-8 w-8 shrink-0 rounded-sm bg-bg-tertiary">
+    <div className={`${sizeClassName} shrink-0 rounded-sm bg-bg-tertiary`}>
       <div className="h-full w-full" style={CHECKERBOARD_STYLE} />
     </div>
   )
@@ -127,6 +131,22 @@ interface VirtualItem {
   index: number
   top: number
   left?: number
+}
+
+interface GridMetrics {
+  cardSize: number
+  rowHeight: number
+}
+
+function getGridMetrics(containerWidth: number): GridMetrics {
+  const effectiveWidth = Math.max(containerWidth, GRID_FALLBACK_WIDTH)
+  const availableWidth = effectiveWidth - GRID_PADDING * 2 - GRID_GAP
+  const cardSize = Math.max(72, Math.floor(availableWidth / GRID_COLUMNS))
+
+  return {
+    cardSize,
+    rowHeight: cardSize + GRID_GAP
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -183,7 +203,7 @@ export function ThingListPanel({
   pageSize = DEFAULT_PAGE_SIZE
 }: ThingListPanelProps = {}): React.JSX.Element {
   const { t } = useTranslation()
-  const [viewMode, setViewMode] = useState<ViewMode>('list')
+  const [viewMode, setViewMode] = useState<ViewMode>('grid')
   const [searchInput, setSearchInput] = useState('')
   const [searchFilter, setSearchFilter] = useState('')
   const [currentPage, setCurrentPage] = useState(0)
@@ -200,20 +220,31 @@ export function ThingListPanel({
     return () => debouncedSetFilter.cancel()
   }, [debouncedSetFilter])
 
-  const handleSearchChange = useCallback(
-    (e: React.ChangeEvent<HTMLInputElement>) => {
-      const value = e.target.value
-      setSearchInput(value)
-      debouncedSetFilter(value)
-    },
-    [debouncedSetFilter]
-  )
-
   // Scroll container state
   const scrollRef = useRef<HTMLDivElement>(null)
   const [scrollTop, setScrollTop] = useState(0)
   const [containerHeight, setContainerHeight] = useState(0)
   const [containerWidth, setContainerWidth] = useState(0)
+  const syncScrollPosition = useCallback((nextScrollTop: number) => {
+    setScrollTop(nextScrollTop)
+    if (scrollRef.current) {
+      scrollRef.current.scrollTop = nextScrollTop
+    }
+  }, [])
+  const resetScrollPosition = useCallback(() => {
+    syncScrollPosition(0)
+  }, [syncScrollPosition])
+
+  const handleSearchChange = useCallback(
+    (e: React.ChangeEvent<HTMLInputElement>) => {
+      const value = e.target.value
+      setSearchInput(value)
+      setCurrentPage(0)
+      resetScrollPosition()
+      debouncedSetFilter(value)
+    },
+    [debouncedSetFilter, resetScrollPosition]
+  )
 
   // Store state
   const currentCategory = useAppStore(selectCurrentCategory)
@@ -229,6 +260,7 @@ export function ThingListPanel({
   const addThing = useAppStore((s) => s.addThing)
   const getThingById = useAppStore((s) => s.getThingById)
   const clientInfo = useAppStore((s) => s.clientInfo)
+  const transparentEnabled = clientInfo?.features.transparency ?? false
   const resolvedPageSize = Math.max(1, pageSize)
 
   // -------------------------------------------------------------------------
@@ -270,13 +302,7 @@ export function ThingListPanel({
   // -------------------------------------------------------------------------
 
   const totalPages = Math.max(1, Math.ceil(filteredThings.length / resolvedPageSize))
-
-  // Clamp current page to valid range when filtered list changes
   const safePage = Math.min(currentPage, totalPages - 1)
-  if (safePage !== currentPage) {
-    // Schedule state update to avoid render-during-render
-    Promise.resolve().then(() => setCurrentPage(safePage))
-  }
 
   const pageStart = safePage * resolvedPageSize
   const pageEnd = Math.min(pageStart + resolvedPageSize, filteredThings.length)
@@ -284,25 +310,6 @@ export function ThingListPanel({
     () => filteredThings.slice(pageStart, pageEnd),
     [filteredThings, pageStart, pageEnd]
   )
-
-  // Reset page when category or filter changes (render-time state adjustment)
-  const [prevCategoryForPage, setPrevCategoryForPage] = useState(currentCategory)
-  const [prevSearchFilter, setPrevSearchFilter] = useState(searchFilter)
-  if (currentCategory !== prevCategoryForPage || searchFilter !== prevSearchFilter) {
-    setPrevCategoryForPage(currentCategory)
-    setPrevSearchFilter(searchFilter)
-    setCurrentPage(0)
-    setScrollTop(0)
-  }
-
-  // Reset search input when category changes (render-time state adjustment)
-  const [prevCategoryForSearch, setPrevCategoryForSearch] = useState(currentCategory)
-  if (currentCategory !== prevCategoryForSearch) {
-    setPrevCategoryForSearch(currentCategory)
-    setSearchInput('')
-    setSearchFilter('')
-    debouncedSetFilter.cancel()
-  }
 
   // Stepper value: selected thing's ID if it's in filteredThings, otherwise first thing on page
   const stepperValue = useMemo(() => {
@@ -345,13 +352,21 @@ export function ThingListPanel({
         if (viewMode === 'list') {
           targetTop = idxInPage * LIST_ITEM_HEIGHT
         } else {
-          const cols = Math.max(1, Math.floor(containerWidth / GRID_CELL_WIDTH))
-          targetTop = Math.floor(idxInPage / cols) * GRID_CELL_HEIGHT
+          const { rowHeight } = getGridMetrics(containerWidth)
+          targetTop = GRID_PADDING + Math.floor(idxInPage / GRID_COLUMNS) * rowHeight
         }
-        scrollRef.current.scrollTop = Math.max(0, targetTop - containerHeight / 2)
+        syncScrollPosition(Math.max(0, targetTop - containerHeight / 2))
       }
     },
-    [filteredThings, selectThing, viewMode, containerWidth, containerHeight, resolvedPageSize]
+    [
+      filteredThings,
+      selectThing,
+      viewMode,
+      containerWidth,
+      containerHeight,
+      resolvedPageSize,
+      syncScrollPosition
+    ]
   )
 
   // -------------------------------------------------------------------------
@@ -367,6 +382,8 @@ export function ThingListPanel({
   useEffect(() => {
     const el = scrollRef.current
     if (!el) return
+    setContainerHeight(el.clientHeight)
+    setContainerWidth(el.clientWidth)
     const observer = new ResizeObserver((entries) => {
       for (const entry of entries) {
         setContainerHeight(entry.contentRect.height)
@@ -376,18 +393,6 @@ export function ThingListPanel({
     observer.observe(el)
     return () => observer.disconnect()
   }, [])
-
-  // Reset scroll when page changes (render-time state adjustment + DOM sync)
-  const [prevPage, setPrevPage] = useState(currentPage)
-  if (currentPage !== prevPage) {
-    setPrevPage(currentPage)
-    setScrollTop(0)
-  }
-  useEffect(() => {
-    if (scrollRef.current) {
-      scrollRef.current.scrollTop = 0
-    }
-  }, [currentPage])
 
   // -------------------------------------------------------------------------
   // Virtual scroll computation (operates on pageThings)
@@ -417,31 +422,33 @@ export function ThingListPanel({
     }
 
     // Grid mode
-    const cols = Math.max(1, Math.floor(containerWidth / GRID_CELL_WIDTH))
-    const totalRows = Math.ceil(count / cols)
-    const totalHeight = totalRows * GRID_CELL_HEIGHT
-    const startRow = Math.max(0, Math.floor(scrollTop / GRID_CELL_HEIGHT) - OVERSCAN)
+    const { cardSize, rowHeight } = getGridMetrics(containerWidth)
+    const totalRows = Math.ceil(count / GRID_COLUMNS)
+    const totalHeight = totalRows * cardSize + Math.max(0, totalRows - 1) * GRID_GAP + GRID_PADDING * 2
+    const startRow = Math.max(0, Math.floor(scrollTop / rowHeight) - OVERSCAN)
     const endRow = Math.min(
       totalRows - 1,
-      Math.ceil((scrollTop + containerHeight) / GRID_CELL_HEIGHT) + OVERSCAN
+      Math.ceil((scrollTop + containerHeight) / rowHeight) + OVERSCAN
     )
 
     const items: VirtualItem[] = []
     for (let row = startRow; row <= endRow; row++) {
-      for (let col = 0; col < cols; col++) {
-        const idx = row * cols + col
+      for (let col = 0; col < GRID_COLUMNS; col++) {
+        const idx = row * GRID_COLUMNS + col
         if (idx < count) {
           items.push({
             thing: pageThings[idx],
             index: idx,
-            top: row * GRID_CELL_HEIGHT,
-            left: col * GRID_CELL_WIDTH
+            top: GRID_PADDING + row * rowHeight,
+            left: GRID_PADDING + col * (cardSize + GRID_GAP)
           })
         }
       }
     }
     return { totalHeight, items }
   }, [viewMode, pageThings, scrollTop, containerHeight, containerWidth])
+
+  const gridMetrics = useMemo(() => getGridMetrics(containerWidth), [containerWidth])
 
   // -------------------------------------------------------------------------
   // Selection handlers
@@ -813,7 +820,7 @@ export function ThingListPanel({
           const thingData = await workerService.decodeObd(new Uint8Array(buffer).buffer)
           const imported = materializeImportedThingData({
             thingData,
-            transparent: clientInfo?.features.transparency ?? false,
+            transparent: transparentEnabled,
             addSprite: (compressed) => useSpriteStore.getState().addSprite(compressed)
           })
 
@@ -837,7 +844,7 @@ export function ThingListPanel({
         window.api.menu.updateState({ clientChanged: true })
       }
     },
-    [isLoaded]
+    [isLoaded, transparentEnabled]
   )
 
   // -------------------------------------------------------------------------
@@ -920,6 +927,7 @@ export function ThingListPanel({
           const targetPage = Math.floor(nextIdx / resolvedPageSize)
           if (targetPage !== safePage) {
             setCurrentPage(targetPage)
+            resetScrollPosition()
           } else {
             // Scroll into view within current page
             const idxInPage = nextIdx - safePage * resolvedPageSize
@@ -928,14 +936,14 @@ export function ThingListPanel({
               if (viewMode === 'list') {
                 itemTop = idxInPage * LIST_ITEM_HEIGHT
               } else {
-                const cols = Math.max(1, Math.floor(containerWidth / GRID_CELL_WIDTH))
-                itemTop = Math.floor(idxInPage / cols) * GRID_CELL_HEIGHT
+                itemTop = GRID_PADDING + Math.floor(idxInPage / GRID_COLUMNS) * gridMetrics.rowHeight
               }
+              const itemHeight = viewMode === 'list' ? LIST_ITEM_HEIGHT : gridMetrics.cardSize
               const scrollBottom = scrollRef.current.scrollTop + containerHeight
               if (itemTop < scrollRef.current.scrollTop) {
-                scrollRef.current.scrollTop = itemTop
-              } else if (itemTop + LIST_ITEM_HEIGHT > scrollBottom) {
-                scrollRef.current.scrollTop = itemTop + LIST_ITEM_HEIGHT - containerHeight
+                syncScrollPosition(itemTop)
+              } else if (itemTop + itemHeight > scrollBottom) {
+                syncScrollPosition(itemTop + itemHeight - containerHeight)
               }
             }
           }
@@ -950,10 +958,13 @@ export function ThingListPanel({
       selectThing,
       handleContextAction,
       viewMode,
-      containerWidth,
       containerHeight,
       safePage,
-      resolvedPageSize
+      resolvedPageSize,
+      gridMetrics.cardSize,
+      gridMetrics.rowHeight,
+      resetScrollPosition,
+      syncScrollPosition
     ]
   )
 
@@ -963,6 +974,26 @@ export function ThingListPanel({
 
   const selectedIdSet = useMemo(() => new Set(selectedThingIds), [selectedThingIds])
   const multipleSelected = selectedThingIds.length > 1
+  const handleCategoryChange = useCallback(
+    (category: ThingCategory) => {
+      if (category === currentCategory) return
+      debouncedSetFilter.cancel()
+      setSearchInput('')
+      setSearchFilter('')
+      setCurrentPage(0)
+      setCurrentCategory(category)
+      resetScrollPosition()
+    },
+    [currentCategory, debouncedSetFilter, setCurrentCategory, resetScrollPosition]
+  )
+  const handleViewModeChange = useCallback(
+    (mode: ViewMode) => {
+      if (mode === viewMode) return
+      setViewMode(mode)
+      resetScrollPosition()
+    },
+    [viewMode, resetScrollPosition]
+  )
 
   // -------------------------------------------------------------------------
   // Render
@@ -988,7 +1019,7 @@ export function ThingListPanel({
                 ? 'border-b-2 border-accent text-accent'
                 : 'text-text-secondary hover:bg-bg-hover hover:text-text-primary'
             }`}
-            onClick={() => setCurrentCategory(cat.key)}
+            onClick={() => handleCategoryChange(cat.key)}
             disabled={!isLoaded}
             data-testid={`category-tab-${cat.key}`}
           >
@@ -1006,7 +1037,7 @@ export function ThingListPanel({
               ? 'bg-bg-tertiary text-text-primary'
               : 'text-text-secondary hover:text-text-primary'
           }`}
-          onClick={() => setViewMode('list')}
+          onClick={() => handleViewModeChange('list')}
           data-testid="view-mode-list"
         >
           <IconList size={12} />
@@ -1018,7 +1049,7 @@ export function ThingListPanel({
               ? 'bg-bg-tertiary text-text-primary'
               : 'text-text-secondary hover:text-text-primary'
           }`}
-          onClick={() => setViewMode('grid')}
+          onClick={() => handleViewModeChange('grid')}
           data-testid="view-mode-grid"
         >
           <IconGrid size={12} />
@@ -1080,19 +1111,28 @@ export function ThingListPanel({
               ) : (
                 <div
                   key={item.thing.id}
-                  className={`absolute flex h-[71px] w-[64px] cursor-pointer flex-col items-center justify-center border border-border-subtle ${
+                  className={`absolute flex cursor-pointer flex-col items-center justify-center rounded-md border border-border-subtle p-2 ${
                     selectedIdSet.has(item.thing.id)
                       ? 'bg-accent text-white'
                       : 'hover:bg-accent-subtle'
                   }`}
-                  style={{ top: item.top, left: item.left }}
+                  style={{
+                    top: item.top,
+                    left: item.left,
+                    width: gridMetrics.cardSize,
+                    height: gridMetrics.cardSize
+                  }}
                   onClick={(e) => handleItemClick(item.thing, e)}
                   onDoubleClick={() => handleItemDoubleClick(item.thing)}
                   onContextMenu={(e) => handleContextMenu(e, item.thing)}
                   data-testid={`thing-grid-item-${item.thing.id}`}
                 >
-                  <SpriteThumbnail thing={item.thing} category={currentCategory} />
-                  <span className="mt-1 text-[9px]">{item.thing.id}</span>
+                  <SpriteThumbnail
+                    thing={item.thing}
+                    category={currentCategory}
+                    sizeClassName="h-12 w-12"
+                  />
+                  <span className="mt-2 text-[10px] font-medium">{item.thing.id}</span>
                 </div>
               )
             )}
