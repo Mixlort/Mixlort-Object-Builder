@@ -359,6 +359,16 @@ describe('ThingListPanel', () => {
 
       expect(useAppStore.getState().selectedThingIds).toEqual([101])
     })
+
+    it('selects all filtered things with Cmd+A', () => {
+      loadProjectWithThings(5)
+      render(<ThingListPanel />)
+
+      fireEvent.mouseDown(screen.getByTestId('thing-grid-item-100'))
+      fireEvent.keyDown(screen.getByTestId('thing-list-panel'), { key: 'a', metaKey: true })
+
+      expect(useAppStore.getState().selectedThingIds).toEqual([100, 101, 102, 103, 104])
+    })
   })
 
   // -----------------------------------------------------------------------

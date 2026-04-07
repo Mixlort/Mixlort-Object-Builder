@@ -61,10 +61,10 @@ import { debounce } from '../../utils/debounce'
 // ---------------------------------------------------------------------------
 
 const LIST_ITEM_HEIGHT = 40
-const GRID_COLUMNS = 2
-const GRID_GAP = 8
-const GRID_PADDING = 8
+const GRID_GAP = 4
+const GRID_PADDING = 4
 const GRID_FALLBACK_WIDTH = 220
+const GRID_THREE_COLUMN_MIN_CARD_WIDTH = 92
 const OVERSCAN = 5
 
 /** Default page size matching legacy objectsListAmount setting */
@@ -98,25 +98,25 @@ const CHECKERBOARD_STYLE = {
 function SpriteThumbnail({
   thing,
   category,
-  sizeClassName = 'h-8 w-8'
+  sizePx = 32
 }: {
   thing: ThingType
   category: ThingCategory
-  sizeClassName?: string
+  sizePx?: number
 }): React.JSX.Element {
   const dataUrl = useSpriteThumbnail(thing, category)
   if (dataUrl) {
     return (
       <img
         src={dataUrl}
-        className={`${sizeClassName} shrink-0 rounded-sm object-contain`}
-        style={{ imageRendering: 'pixelated' }}
+        className="shrink-0 rounded-sm object-contain"
+        style={{ imageRendering: 'pixelated', width: sizePx, height: sizePx }}
         alt=""
       />
     )
   }
   return (
-    <div className={`${sizeClassName} shrink-0 rounded-sm bg-bg-tertiary`}>
+    <div className="shrink-0 rounded-sm bg-bg-tertiary" style={{ width: sizePx, height: sizePx }}>
       <div className="h-full w-full" style={CHECKERBOARD_STYLE} />
     </div>
   )
@@ -134,18 +134,38 @@ interface VirtualItem {
 }
 
 interface GridMetrics {
-  cardSize: number
+  columns: number
+  cardWidth: number
+  cardHeight: number
+  columnWidth: number
+  iconSize: number
   rowHeight: number
 }
 
 function getGridMetrics(containerWidth: number): GridMetrics {
   const effectiveWidth = Math.max(containerWidth, GRID_FALLBACK_WIDTH)
-  const availableWidth = effectiveWidth - GRID_PADDING * 2 - GRID_GAP
-  const cardSize = Math.max(72, Math.floor(availableWidth / GRID_COLUMNS))
+  const estimatedThreeColumnCardWidth =
+    Math.floor((effectiveWidth - GRID_PADDING * 2 - GRID_GAP * 2) / 3) - 4
+  const columns =
+    estimatedThreeColumnCardWidth >= GRID_THREE_COLUMN_MIN_CARD_WIDTH ? 3 : 2
+  const totalGap = GRID_GAP * (columns - 1)
+  const availableWidth = effectiveWidth - GRID_PADDING * 2 - totalGap
+  const columnWidth = Math.max(72, Math.floor(availableWidth / columns))
+  const cardWidth = columns === 2 ? Math.max(76, columnWidth) : Math.max(92, columnWidth)
+  const cardHeight = columns === 2
+    ? Math.max(68, Math.min(cardWidth - 10, 82))
+    : Math.max(84, Math.min(cardWidth - 8, 96))
+  const iconSize = columns === 2
+    ? Math.max(50, Math.min(cardWidth - 12, 60))
+    : Math.max(58, Math.min(cardWidth - 12, 70))
 
   return {
-    cardSize,
-    rowHeight: cardSize + GRID_GAP
+    columns,
+    cardWidth,
+    cardHeight,
+    columnWidth,
+    iconSize,
+    rowHeight: cardHeight + GRID_GAP
   }
 }
 
@@ -221,6 +241,7 @@ export function ThingListPanel({
   }, [debouncedSetFilter])
 
   // Scroll container state
+  const panelRef = useRef<HTMLDivElement>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
   const [scrollTop, setScrollTop] = useState(0)
   const [containerHeight, setContainerHeight] = useState(0)
@@ -245,6 +266,21 @@ export function ThingListPanel({
     },
     [debouncedSetFilter, resetScrollPosition]
   )
+
+  const handlePanelMouseDownCapture = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
+    const target = e.target as HTMLElement | null
+    if (
+      target &&
+      (target.tagName === 'INPUT' ||
+        target.tagName === 'TEXTAREA' ||
+        target.tagName === 'SELECT' ||
+        target.isContentEditable)
+    ) {
+      return
+    }
+
+    panelRef.current?.focus()
+  }, [])
 
   // Store state
   const currentCategory = useAppStore(selectCurrentCategory)
@@ -352,8 +388,8 @@ export function ThingListPanel({
         if (viewMode === 'list') {
           targetTop = idxInPage * LIST_ITEM_HEIGHT
         } else {
-          const { rowHeight } = getGridMetrics(containerWidth)
-          targetTop = GRID_PADDING + Math.floor(idxInPage / GRID_COLUMNS) * rowHeight
+          const { columns, rowHeight } = getGridMetrics(containerWidth)
+          targetTop = GRID_PADDING + Math.floor(idxInPage / columns) * rowHeight
         }
         syncScrollPosition(Math.max(0, targetTop - containerHeight / 2))
       }
@@ -422,9 +458,10 @@ export function ThingListPanel({
     }
 
     // Grid mode
-    const { cardSize, rowHeight } = getGridMetrics(containerWidth)
-    const totalRows = Math.ceil(count / GRID_COLUMNS)
-    const totalHeight = totalRows * cardSize + Math.max(0, totalRows - 1) * GRID_GAP + GRID_PADDING * 2
+    const { columns, cardWidth, cardHeight, columnWidth, rowHeight } = getGridMetrics(containerWidth)
+    const totalRows = Math.ceil(count / columns)
+    const totalHeight =
+      totalRows * cardHeight + Math.max(0, totalRows - 1) * GRID_GAP + GRID_PADDING * 2
     const startRow = Math.max(0, Math.floor(scrollTop / rowHeight) - OVERSCAN)
     const endRow = Math.min(
       totalRows - 1,
@@ -433,14 +470,14 @@ export function ThingListPanel({
 
     const items: VirtualItem[] = []
     for (let row = startRow; row <= endRow; row++) {
-      for (let col = 0; col < GRID_COLUMNS; col++) {
-        const idx = row * GRID_COLUMNS + col
+      for (let col = 0; col < columns; col++) {
+        const idx = row * columns + col
         if (idx < count) {
           items.push({
             thing: pageThings[idx],
             index: idx,
             top: GRID_PADDING + row * rowHeight,
-            left: GRID_PADDING + col * (cardSize + GRID_GAP)
+            left: GRID_PADDING + col * (columnWidth + GRID_GAP) + Math.floor((columnWidth - cardWidth) / 2)
           })
         }
       }
@@ -867,6 +904,13 @@ export function ThingListPanel({
       }
 
       // Ctrl+C: Copy based on clipboardAction setting
+      if ((e.ctrlKey || e.metaKey) && e.key === 'a') {
+        e.preventDefault()
+        selectThingsAction(filteredThings.map((thing) => thing.id))
+        return
+      }
+
+      // Ctrl+C: Copy based on clipboardAction setting
       if ((e.ctrlKey || e.metaKey) && e.key === 'c') {
         e.preventDefault()
         if (selectedThingId === null || selectedThingIds.length > 1) return
@@ -936,9 +980,9 @@ export function ThingListPanel({
               if (viewMode === 'list') {
                 itemTop = idxInPage * LIST_ITEM_HEIGHT
               } else {
-                itemTop = GRID_PADDING + Math.floor(idxInPage / GRID_COLUMNS) * gridMetrics.rowHeight
+                itemTop = GRID_PADDING + Math.floor(idxInPage / gridMetrics.columns) * gridMetrics.rowHeight
               }
-              const itemHeight = viewMode === 'list' ? LIST_ITEM_HEIGHT : gridMetrics.cardSize
+              const itemHeight = viewMode === 'list' ? LIST_ITEM_HEIGHT : gridMetrics.cardHeight
               const scrollBottom = scrollRef.current.scrollTop + containerHeight
               if (itemTop < scrollRef.current.scrollTop) {
                 syncScrollPosition(itemTop)
@@ -956,12 +1000,14 @@ export function ThingListPanel({
       selectedThingId,
       selectedThingIds,
       selectThing,
+      selectThingsAction,
       handleContextAction,
       viewMode,
       containerHeight,
       safePage,
       resolvedPageSize,
-      gridMetrics.cardSize,
+      gridMetrics.columns,
+      gridMetrics.cardHeight,
       gridMetrics.rowHeight,
       resetScrollPosition,
       syncScrollPosition
@@ -1001,12 +1047,14 @@ export function ThingListPanel({
 
   return (
     <div
-      className={`flex h-full flex-col bg-bg-secondary ${isDragOver ? 'ring-2 ring-inset ring-accent' : ''}`}
+      ref={panelRef}
+      className={`flex h-full flex-col bg-bg-secondary outline-none select-none ${isDragOver ? 'ring-2 ring-inset ring-accent' : ''}`}
       onKeyDown={handleKeyDown}
+      onMouseDownCapture={handlePanelMouseDownCapture}
       onDragOver={handleFileDragOver}
       onDragLeave={handleFileDragLeave}
       onDrop={handleFileDrop}
-      tabIndex={-1}
+      tabIndex={0}
       data-testid="thing-list-panel"
     >
       {/* Category tabs */}
@@ -1111,7 +1159,7 @@ export function ThingListPanel({
               ) : (
                 <div
                   key={item.thing.id}
-                  className={`absolute flex cursor-pointer flex-col items-center justify-center rounded-md border border-border-subtle p-2 ${
+                  className={`absolute flex cursor-pointer flex-col items-center justify-between rounded-sm border border-border-subtle p-1 ${
                     selectedIdSet.has(item.thing.id)
                       ? 'bg-accent text-white'
                       : 'hover:bg-accent-subtle'
@@ -1119,8 +1167,8 @@ export function ThingListPanel({
                   style={{
                     top: item.top,
                     left: item.left,
-                    width: gridMetrics.cardSize,
-                    height: gridMetrics.cardSize
+                    width: gridMetrics.cardWidth,
+                    height: gridMetrics.cardHeight
                   }}
                   onClick={(e) => handleItemClick(item.thing, e)}
                   onDoubleClick={() => handleItemDoubleClick(item.thing)}
@@ -1130,9 +1178,9 @@ export function ThingListPanel({
                   <SpriteThumbnail
                     thing={item.thing}
                     category={currentCategory}
-                    sizeClassName="h-12 w-12"
+                    sizePx={gridMetrics.iconSize}
                   />
-                  <span className="mt-2 text-[10px] font-medium">{item.thing.id}</span>
+                  <span className="text-[8px] leading-none">{item.thing.id}</span>
                 </div>
               )
             )}
