@@ -17,6 +17,7 @@ import { useAppStore } from '../stores'
 import { ThingCategory, type ThingType, getFrameGroupSpriteIndex } from '../types'
 import { uncompressPixels, argbToRgba } from '../services/spr'
 import { LruCache } from '../utils/lru-cache'
+import { getEffectPreviewFrameIndex, type EffectPreviewFrameMode } from './effect-preview-frame'
 
 // ---------------------------------------------------------------------------
 // Module-level thumbnail cache (thing signature -> data URL, LRU eviction)
@@ -132,7 +133,8 @@ function blitSpriteARGB(
 function renderThingThumbnail(
   thing: ThingType,
   category: ThingCategory,
-  transparent: boolean
+  transparent: boolean,
+  effectPreviewFrameMode: EffectPreviewFrameMode
 ): string | null {
   const fg = thing.frameGroups?.[0]
   if (!fg) return null
@@ -144,6 +146,7 @@ function renderThingThumbnail(
 
   // Determine layers and direction based on category (legacy behavior)
   const isOutfit = category === ThingCategory.OUTFIT
+  const isEffect = category === ThingCategory.EFFECT
   const layers = isOutfit ? 1 : fg.layers
   const patternX = isOutfit && fg.patternX > 1 ? 2 : 0
 
@@ -158,13 +161,21 @@ function renderThingThumbnail(
 
   const spriteStore = useSpriteStore.getState()
   let hasAnySprite = false
+  const frame = isEffect
+    ? getEffectPreviewFrameIndex(
+        fg,
+        effectPreviewFrameMode,
+        (spriteId) => spriteStore.getSprite(spriteId),
+        transparent
+      )
+    : 0
 
   // Composite sprites: loop layers, width tiles, height tiles
   for (let l = 0; l < layers; l++) {
     for (let w = 0; w < width; w++) {
       for (let h = 0; h < height; h++) {
         // Get sprite array index for this tile
-        const index = getFrameGroupSpriteIndex(fg, w, h, l, patternX, 0, 0, 0)
+        const index = getFrameGroupSpriteIndex(fg, w, h, l, patternX, 0, 0, frame)
         const spriteId = fg.spriteIndex[index]
         if (!spriteId || spriteId <= 0) continue
 
@@ -210,7 +221,11 @@ function renderThingThumbnail(
  * Returns a data URL (PNG) for the given thing's thumbnail, or null if unavailable.
  * Composites all tiles/layers matching the legacy rendering behavior.
  */
-export function useSpriteThumbnail(thing: ThingType, category: ThingCategory): string | null {
+export function useSpriteThumbnail(
+  thing: ThingType,
+  category: ThingCategory,
+  effectPreviewFrameMode: EffectPreviewFrameMode = 'first'
+): string | null {
   const transparent = useAppStore((s) => s.clientInfo?.features?.transparency ?? false)
   const thingSignature = useMemo(() => getThingThumbnailSignature(thing), [thing])
 
@@ -219,7 +234,7 @@ export function useSpriteThumbnail(thing: ThingType, category: ThingCategory): s
       return null
     }
 
-    const cacheKey = `${category}:${thing.id}:${transparent ? 1 : 0}:${thingSignature}`
+    const cacheKey = `${category}:${thing.id}:${transparent ? 1 : 0}:${effectPreviewFrameMode}:${thingSignature}`
 
     // Check module-level cache
     const cached = thumbnailCache.get(cacheKey)
@@ -228,7 +243,7 @@ export function useSpriteThumbnail(thing: ThingType, category: ThingCategory): s
     }
 
     try {
-      const url = renderThingThumbnail(thing, category, transparent)
+      const url = renderThingThumbnail(thing, category, transparent, effectPreviewFrameMode)
       if (url) {
         thumbnailCache.set(cacheKey, url)
       }
@@ -236,7 +251,7 @@ export function useSpriteThumbnail(thing: ThingType, category: ThingCategory): s
     } catch {
       return null
     }
-  }, [thing, category, transparent, thingSignature])
+  }, [thing, category, transparent, effectPreviewFrameMode, thingSignature])
 
   return dataUrl
 }

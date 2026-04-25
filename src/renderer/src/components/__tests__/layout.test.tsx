@@ -261,6 +261,7 @@ describe('Toolbar', () => {
     expect(screen.getByTitle('Object Viewer')).toBeInTheDocument()
     expect(screen.getByTitle('Sprites')).toBeInTheDocument()
     expect(screen.getByTitle('Animation Editor')).toBeInTheDocument()
+    expect(screen.getByTestId('toolbar-toggle-effect-preview-frame')).toBeInTheDocument()
     expect(screen.getByTestId('toolbar-toggle-editor-panel')).toBeInTheDocument()
     expect(screen.getByTestId('toolbar-toggle-sprite-panel')).toBeInTheDocument()
     expect(screen.getByTitle(/Log Window/)).toBeInTheDocument()
@@ -341,6 +342,22 @@ describe('Toolbar', () => {
 
     fireEvent.click(screen.getByTitle(/Log Window/))
     expect(onAction).toHaveBeenLastCalledWith('windowLog')
+  })
+
+  it('marks the effect preview toggle active and calls its toggle handler', () => {
+    const onToggleEffectPreviewFrameMode = vi.fn()
+    render(
+      <Toolbar
+        effectPreviewFrameMode="largest"
+        onToggleEffectPreviewFrameMode={onToggleEffectPreviewFrameMode}
+      />
+    )
+
+    const button = screen.getByTestId('toolbar-toggle-effect-preview-frame')
+    expect(button).toHaveClass('bg-bg-tertiary')
+
+    fireEvent.click(button)
+    expect(onToggleEffectPreviewFrameMode).toHaveBeenCalledTimes(1)
   })
 
   it('does not dispatch disabled button actions', () => {

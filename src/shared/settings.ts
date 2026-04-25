@@ -11,6 +11,8 @@
 // ObjectBuilderSettings
 // ---------------------------------------------------------------------------
 
+export type EffectPreviewFrameMode = 'first' | 'largest'
+
 export interface ObjectBuilderSettings {
   // --- Directory history ---------------------------------------------------
   lastDirectory: string | null
@@ -51,6 +53,7 @@ export interface ObjectBuilderSettings {
   objectsListAmount: number
   spritesListAmount: number
   hideEmptyObjects: boolean
+  effectPreviewFrameMode: EffectPreviewFrameMode
 
   // --- Export options -------------------------------------------------------
   exportWithTransparentBackground: boolean
@@ -118,6 +121,7 @@ export function createObjectBuilderSettings(): ObjectBuilderSettings {
     objectsListAmount: 100,
     spritesListAmount: 100,
     hideEmptyObjects: false,
+    effectPreviewFrameMode: 'first',
 
     exportWithTransparentBackground: false,
     jpegQuality: 100,

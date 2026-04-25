@@ -28,6 +28,7 @@ export {
   MdContentCopy as IconDuplicate,
   MdAddCircle as IconAdd,
   MdDelete as IconDelete,
+  MdImageSearch as IconEffectPreview,
   MdContentPaste as IconPaste,
   MdInfo as IconInfo,
   MdError as IconError,

@@ -54,6 +54,7 @@ import { useTranslation } from 'react-i18next'
 import { PaginationStepper } from '../../components/PaginationStepper'
 import { ThingContextMenu, type ThingContextAction } from './ThingContextMenu'
 import { useSpriteThumbnail } from '../../hooks/use-sprite-thumbnail'
+import type { EffectPreviewFrameMode } from '../../hooks/effect-preview-frame'
 import { debounce } from '../../utils/debounce'
 
 // ---------------------------------------------------------------------------
@@ -98,13 +99,15 @@ const CHECKERBOARD_STYLE = {
 function SpriteThumbnail({
   thing,
   category,
+  effectPreviewFrameMode,
   sizePx = 32
 }: {
   thing: ThingType
   category: ThingCategory
+  effectPreviewFrameMode: EffectPreviewFrameMode
   sizePx?: number
 }): React.JSX.Element {
-  const dataUrl = useSpriteThumbnail(thing, category)
+  const dataUrl = useSpriteThumbnail(thing, category, effectPreviewFrameMode)
   if (dataUrl) {
     return (
       <img
@@ -232,12 +235,14 @@ interface ThingListPanelProps {
   onEditThing?: (thingId: number) => void
   onAction?: (action: ThingListAction) => void
   pageSize?: number
+  effectPreviewFrameMode?: EffectPreviewFrameMode
 }
 
 export function ThingListPanel({
   onEditThing,
   onAction,
-  pageSize = DEFAULT_PAGE_SIZE
+  pageSize = DEFAULT_PAGE_SIZE,
+  effectPreviewFrameMode = 'first'
 }: ThingListPanelProps = {}): React.JSX.Element {
   const { t } = useTranslation()
   const [viewMode, setViewMode] = useState<ViewMode>('grid')
@@ -1164,7 +1169,11 @@ export function ThingListPanel({
                   onContextMenu={(e) => handleContextMenu(e, item.thing)}
                   data-testid={`thing-list-item-${item.thing.id}`}
                 >
-                  <SpriteThumbnail thing={item.thing} category={currentCategory} />
+                  <SpriteThumbnail
+                    thing={item.thing}
+                    category={currentCategory}
+                    effectPreviewFrameMode={effectPreviewFrameMode}
+                  />
                   <div className="flex flex-1 flex-col overflow-hidden">
                     <span className="truncate text-xs">
                       {item.thing.id}
@@ -1195,6 +1204,7 @@ export function ThingListPanel({
                   <SpriteThumbnail
                     thing={item.thing}
                     category={currentCategory}
+                    effectPreviewFrameMode={effectPreviewFrameMode}
                     sizePx={gridMetrics.iconSize}
                   />
                   <span className="text-[8px] leading-none">{item.thing.id}</span>

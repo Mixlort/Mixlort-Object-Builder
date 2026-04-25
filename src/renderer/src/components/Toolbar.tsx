@@ -20,6 +20,7 @@ import {
   MENU_WINDOW_LOG,
   type MenuAction
 } from '../../../shared/menu-actions'
+import type { EffectPreviewFrameMode } from '../../../shared/settings'
 import { useAppStore, selectIsProjectLoaded } from '../stores'
 import {
   IconNewFile,
@@ -30,6 +31,7 @@ import {
   IconGrid,
   IconSlicer,
   IconAnimation,
+  IconEffectPreview,
   IconLog
 } from './Icons'
 
@@ -81,9 +83,15 @@ function ToolbarSeparator(): React.JSX.Element {
 
 interface ToolbarProps {
   onAction?: (action: MenuAction) => void
+  effectPreviewFrameMode?: EffectPreviewFrameMode
+  onToggleEffectPreviewFrameMode?: () => void
 }
 
-export function Toolbar({ onAction }: ToolbarProps): React.JSX.Element {
+export function Toolbar({
+  onAction,
+  effectPreviewFrameMode = 'first',
+  onToggleEffectPreviewFrameMode
+}: ToolbarProps): React.JSX.Element {
   const { t } = useTranslation()
   const isLoaded = useAppStore(selectIsProjectLoaded)
   const showEditorPanel = useAppStore((s) => s.ui.showEditorPanel)
@@ -139,6 +147,17 @@ export function Toolbar({ onAction }: ToolbarProps): React.JSX.Element {
         icon={<IconAnimation size={16} />}
         title={t('labels.animationEditor')}
         onClick={() => dispatch(MENU_TOOLS_ANIMATION_EDITOR)}
+      />
+      <ToolbarButton
+        icon={<IconEffectPreview size={16} />}
+        title={
+          effectPreviewFrameMode === 'largest'
+            ? 'Effect preview: largest frame'
+            : 'Effect preview: first frame'
+        }
+        active={effectPreviewFrameMode === 'largest'}
+        testId="toolbar-toggle-effect-preview-frame"
+        onClick={() => onToggleEffectPreviewFrameMode?.()}
       />
 
       <ToolbarSeparator />

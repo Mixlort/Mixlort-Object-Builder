@@ -1116,6 +1116,25 @@ export function App(): React.JSX.Element {
     [addLog, setTheme]
   )
 
+  const handleToggleEffectPreviewFrameMode = useCallback(() => {
+    const nextMode: ObjectBuilderSettings['effectPreviewFrameMode'] =
+      runtimeSettings.effectPreviewFrameMode === 'largest' ? 'first' : 'largest'
+    const nextSettings: ObjectBuilderSettings = {
+      ...runtimeSettings,
+      effectPreviewFrameMode: nextMode
+    }
+
+    setRuntimeSettings(nextSettings)
+    clearThumbnailCache()
+
+    if (window.api?.settings) {
+      void window.api.settings.save(nextSettings).catch((error: unknown) => {
+        const message = error instanceof Error ? error.message : String(error)
+        addLog('error', `Failed to save effect preview mode: ${message}`)
+      })
+    }
+  }, [runtimeSettings, addLog])
+
   const handleFindThings = useCallback(
     (filters: FindThingFilters) => {
       addLog('info', `Searching things: category=${filters.category}, name="${filters.name}"`)
@@ -1763,7 +1782,11 @@ export function App(): React.JSX.Element {
 
   return (
     <div className="flex h-full flex-col">
-      <Toolbar onAction={handleAction} />
+      <Toolbar
+        onAction={handleAction}
+        effectPreviewFrameMode={runtimeSettings.effectPreviewFrameMode}
+        onToggleEffectPreviewFrameMode={handleToggleEffectPreviewFrameMode}
+      />
 
       <div className="flex flex-1 flex-col overflow-hidden">
         {/* Main content area with three resizable panels */}
@@ -1779,6 +1802,7 @@ export function App(): React.JSX.Element {
                 onEditThing={handleEditThing}
                 onAction={handleThingListAction}
                 pageSize={runtimeSettings.objectsListAmount}
+                effectPreviewFrameMode={runtimeSettings.effectPreviewFrameMode}
               />
             }
             center={<ThingTypeEditor />}
