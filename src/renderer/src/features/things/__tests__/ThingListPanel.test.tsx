@@ -5,11 +5,13 @@
  */
 
 import React from 'react'
-import { describe, it, expect, beforeEach, vi } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { render, screen, fireEvent, act, createEvent } from '@testing-library/react'
 import { ThingListPanel, getGridMetrics } from '../ThingListPanel'
-import { resetAppStore, useAppStore, resetEditorStore } from '../../../stores'
-import { ThingCategory, createThingType, createClientInfo } from '../../../types'
+import { resetAppStore, useAppStore, resetEditorStore, resetSpriteStore, useSpriteStore } from '../../../stores'
+import { compressPixels } from '../../../services/spr'
+import { clearEffectColorAnalysisCache } from '../../../hooks/effect-dominant-color'
+import { ThingCategory, createThingType, createClientInfo, createFrameGroup } from '../../../types'
 import type { ThingType } from '../../../types'
 
 // ---------------------------------------------------------------------------
@@ -22,6 +24,44 @@ function makeThing(id: number, category: ThingCategory, marketName = ''): ThingT
   t.category = category
   t.marketName = marketName
   return t
+}
+
+function makePixels(red: number, green: number, blue: number, count = 4): Uint8Array {
+  const pixels = new Uint8Array(32 * 32 * 4)
+  for (let index = 0; index < count; index++) {
+    const offset = index * 4
+    pixels[offset] = 0xff
+    pixels[offset + 1] = red
+    pixels[offset + 2] = green
+    pixels[offset + 3] = blue
+  }
+  return pixels
+}
+
+function makeMixedPixels(
+  runs: Array<{ red: number; green: number; blue: number; count: number }>
+): Uint8Array {
+  const pixels = new Uint8Array(32 * 32 * 4)
+  let index = 0
+  for (const run of runs) {
+    for (let i = 0; i < run.count; i++) {
+      const offset = index * 4
+      pixels[offset] = 0xff
+      pixels[offset + 1] = run.red
+      pixels[offset + 2] = run.green
+      pixels[offset + 3] = run.blue
+      index++
+    }
+  }
+  return pixels
+}
+
+function makeEffect(id: number, spriteId: number, marketName = ''): ThingType {
+  const effect = makeThing(id, ThingCategory.EFFECT, marketName)
+  const fg = createFrameGroup()
+  fg.spriteIndex = [spriteId]
+  effect.frameGroups[0] = fg
+  return effect
 }
 
 function loadProjectWithThings(itemCount = 5, outfitCount = 3): void {
@@ -55,13 +95,59 @@ function loadProjectWithThings(itemCount = 5, outfitCount = 3): void {
   })
 }
 
+function loadProjectWithEffects(effects: ThingType[]): void {
+  const clientInfo = createClientInfo()
+  clientInfo.minEffectId = effects.length > 0 ? effects[0].id : 1
+  clientInfo.maxEffectId = effects.length > 0 ? effects[effects.length - 1].id : 0
+
+  useAppStore.setState({
+    project: {
+      loaded: true,
+      isTemporary: false,
+      changed: false,
+      fileName: 'test.dat',
+      datFilePath: '/test.dat',
+      sprFilePath: '/test.spr'
+    },
+    clientInfo,
+    currentCategory: ThingCategory.EFFECT,
+    things: {
+      items: [],
+      outfits: [],
+      effects,
+      missiles: []
+    }
+  })
+}
+
 // ---------------------------------------------------------------------------
 // Setup
 // ---------------------------------------------------------------------------
 
+let getContextSpy: { mockRestore: () => void } | null = null
+let toDataUrlSpy: { mockRestore: () => void } | null = null
+
 beforeEach(() => {
   resetAppStore()
   resetEditorStore()
+  resetSpriteStore()
+  clearEffectColorAnalysisCache()
+  getContextSpy = vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockImplementation(
+    () =>
+      ({
+        putImageData: vi.fn(),
+        clearRect: vi.fn()
+      }) as unknown as CanvasRenderingContext2D
+  )
+  toDataUrlSpy = vi
+    .spyOn(HTMLCanvasElement.prototype, 'toDataURL')
+    .mockImplementation(() => 'data:image/png;base64,test')
+})
+
+afterEach(() => {
+  getContextSpy?.mockRestore()
+  toDataUrlSpy?.mockRestore()
+  vi.useRealTimers()
 })
 
 // ---------------------------------------------------------------------------
@@ -319,6 +405,172 @@ describe('ThingListPanel', () => {
       fireEvent(input, event)
 
       expect(preventDefault).not.toHaveBeenCalled()
+    })
+
+    it('shows effect color controls only in the effects category', () => {
+      loadProjectWithThings()
+      render(<ThingListPanel />)
+
+      expect(screen.queryByTestId('effect-color-filter')).not.toBeInTheDocument()
+      fireEvent.click(screen.getByTestId('category-tab-effect'))
+
+      expect(screen.getByTestId('effect-color-filter')).toBeInTheDocument()
+      expect(screen.getByTestId('effect-color-sort')).toBeInTheDocument()
+    })
+
+    it('filters effects by one dominant color and restores all colors', () => {
+      useSpriteStore
+        .getState()
+        .loadSprites(
+          new Map([
+            [1, compressPixels(makePixels(255, 0, 0), false)],
+            [2, compressPixels(makePixels(0, 64, 255), false)]
+          ])
+        )
+      loadProjectWithEffects([makeEffect(1, 1, 'Fire Burst'), makeEffect(2, 2, 'Ice Wave')])
+      render(<ThingListPanel />)
+
+      fireEvent.change(screen.getByTestId('effect-color-filter'), { target: { value: 'blue' } })
+
+      expect(screen.queryByTestId('thing-grid-item-1')).not.toBeInTheDocument()
+      expect(screen.getByTestId('thing-grid-item-2')).toBeInTheDocument()
+
+      fireEvent.change(screen.getByTestId('effect-color-filter'), { target: { value: 'all' } })
+
+      expect(screen.getByTestId('thing-grid-item-1')).toBeInTheDocument()
+      expect(screen.getByTestId('thing-grid-item-2')).toBeInTheDocument()
+    })
+
+    it('filters chromatic effects when the largest frame has stronger neutral glow', () => {
+      useSpriteStore
+        .getState()
+        .loadSprites(
+          new Map([
+            [
+              1,
+              compressPixels(
+                makeMixedPixels([
+                  { red: 240, green: 240, blue: 240, count: 80 },
+                  { red: 0, green: 96, blue: 255, count: 6 }
+                ]),
+                false
+              )
+            ],
+            [
+              2,
+              compressPixels(
+                makeMixedPixels([
+                  { red: 240, green: 240, blue: 240, count: 80 },
+                  { red: 255, green: 32, blue: 32, count: 6 }
+                ]),
+                false
+              )
+            ],
+            [
+              3,
+              compressPixels(
+                makeMixedPixels([
+                  { red: 240, green: 240, blue: 240, count: 80 },
+                  { red: 32, green: 220, blue: 32, count: 6 }
+                ]),
+                false
+              )
+            ],
+            [4, compressPixels(makePixels(220, 220, 220, 86), false)]
+          ])
+        )
+      loadProjectWithEffects([
+        makeEffect(1, 1, 'Blue Glow'),
+        makeEffect(2, 2, 'Red Glow'),
+        makeEffect(3, 3, 'Green Glow'),
+        makeEffect(4, 4, 'Neutral Glow')
+      ])
+      render(<ThingListPanel />)
+
+      fireEvent.change(screen.getByTestId('effect-color-filter'), { target: { value: 'blue' } })
+      expect(screen.getByTestId('thing-grid-item-1')).toBeInTheDocument()
+      expect(screen.queryByTestId('thing-grid-item-2')).not.toBeInTheDocument()
+      expect(screen.queryByTestId('thing-grid-item-3')).not.toBeInTheDocument()
+      expect(screen.queryByTestId('thing-grid-item-4')).not.toBeInTheDocument()
+
+      fireEvent.change(screen.getByTestId('effect-color-filter'), { target: { value: 'red' } })
+      expect(screen.queryByTestId('thing-grid-item-1')).not.toBeInTheDocument()
+      expect(screen.getByTestId('thing-grid-item-2')).toBeInTheDocument()
+      expect(screen.queryByTestId('thing-grid-item-3')).not.toBeInTheDocument()
+      expect(screen.queryByTestId('thing-grid-item-4')).not.toBeInTheDocument()
+
+      fireEvent.change(screen.getByTestId('effect-color-filter'), { target: { value: 'green' } })
+      expect(screen.queryByTestId('thing-grid-item-1')).not.toBeInTheDocument()
+      expect(screen.queryByTestId('thing-grid-item-2')).not.toBeInTheDocument()
+      expect(screen.getByTestId('thing-grid-item-3')).toBeInTheDocument()
+      expect(screen.queryByTestId('thing-grid-item-4')).not.toBeInTheDocument()
+
+      fireEvent.change(screen.getByTestId('effect-color-filter'), { target: { value: 'neutral' } })
+      expect(screen.queryByTestId('thing-grid-item-1')).not.toBeInTheDocument()
+      expect(screen.queryByTestId('thing-grid-item-2')).not.toBeInTheDocument()
+      expect(screen.queryByTestId('thing-grid-item-3')).not.toBeInTheDocument()
+      expect(screen.getByTestId('thing-grid-item-4')).toBeInTheDocument()
+    })
+
+    it('sorts effects by dominant color and then by ID within the same color', () => {
+      useSpriteStore
+        .getState()
+        .loadSprites(
+          new Map([
+            [1, compressPixels(makePixels(0, 64, 255), false)],
+            [2, compressPixels(makePixels(255, 0, 0), false)]
+          ])
+        )
+      loadProjectWithEffects([
+        makeEffect(4, 2, 'Fire Four'),
+        makeEffect(3, 1, 'Ice Three'),
+        makeEffect(2, 2, 'Fire Two')
+      ])
+      render(<ThingListPanel />)
+
+      fireEvent.click(screen.getByTestId('effect-color-sort'))
+
+      const renderedIds = screen
+        .getAllByTestId(/thing-grid-item-/)
+        .sort((a, b) => {
+          const aTop = Number.parseFloat(a.style.top)
+          const bTop = Number.parseFloat(b.style.top)
+          if (aTop !== bTop) return aTop - bTop
+          return Number.parseFloat(a.style.left) - Number.parseFloat(b.style.left)
+        })
+        .map((item) => item.getAttribute('data-testid'))
+
+      expect(renderedIds).toEqual(['thing-grid-item-2', 'thing-grid-item-4', 'thing-grid-item-3'])
+    })
+
+    it('combines text search with the effect color filter', () => {
+      vi.useFakeTimers()
+      useSpriteStore
+        .getState()
+        .loadSprites(
+          new Map([
+            [1, compressPixels(makePixels(255, 0, 0), false)],
+            [2, compressPixels(makePixels(0, 64, 255), false)],
+            [3, compressPixels(makePixels(0, 64, 255), false)]
+          ])
+        )
+      loadProjectWithEffects([
+        makeEffect(1, 1, 'Fire Burst'),
+        makeEffect(2, 2, 'Ice Wave'),
+        makeEffect(3, 3, 'Blue Spark')
+      ])
+      render(<ThingListPanel />)
+
+      fireEvent.change(screen.getByTestId('effect-color-filter'), { target: { value: 'blue' } })
+      fireEvent.change(screen.getByTestId('thing-search-input'), { target: { value: 'ice' } })
+      act(() => {
+        vi.advanceTimersByTime(200)
+      })
+
+      expect(screen.queryByTestId('thing-grid-item-1')).not.toBeInTheDocument()
+      expect(screen.getByTestId('thing-grid-item-2')).toBeInTheDocument()
+      expect(screen.queryByTestId('thing-grid-item-3')).not.toBeInTheDocument()
+      vi.useRealTimers()
     })
   })
 

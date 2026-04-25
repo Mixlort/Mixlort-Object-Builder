@@ -18,6 +18,7 @@ import { ThingCategory, type ThingType, getFrameGroupSpriteIndex } from '../type
 import { uncompressPixels, argbToRgba } from '../services/spr'
 import { LruCache } from '../utils/lru-cache'
 import { getEffectPreviewFrameIndex, type EffectPreviewFrameMode } from './effect-preview-frame'
+import { clearEffectColorAnalysisCache } from './effect-dominant-color'
 
 // ---------------------------------------------------------------------------
 // Module-level thumbnail cache (thing signature -> data URL, LRU eviction)
@@ -30,6 +31,7 @@ const thumbnailCache = new LruCache<string, string>(DEFAULT_THUMBNAIL_CACHE_SIZE
 /** Clear the thumbnail cache (called when project loads/unloads). */
 export function clearThumbnailCache(): void {
   thumbnailCache.clear()
+  clearEffectColorAnalysisCache()
 }
 
 /**
@@ -38,6 +40,7 @@ export function clearThumbnailCache(): void {
  */
 export function disposeThumbnailResources(): void {
   thumbnailCache.clear()
+  clearEffectColorAnalysisCache()
   if (_offscreenCanvas) {
     // Reset canvas dimensions to release backing pixel buffer
     _offscreenCanvas.width = 0

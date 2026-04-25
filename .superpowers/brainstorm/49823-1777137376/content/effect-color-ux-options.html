@@ -1,0 +1,67 @@
+<h2>Organizacao dos effects por cor dominante</h2>
+<p class="subtitle">Tres caminhos de interface para usar a cor dominante do frame maior sem pesar a lista.</p>
+
+<div class="cards">
+  <div class="card" data-choice="filter" onclick="toggleSelect(this)">
+    <div class="card-image">
+      <div class="mockup">
+        <div class="mockup-header">A. Filtro por cor no painel Effects</div>
+        <div class="mockup-body">
+          <div class="mock-nav">Effects | Busca | grade/lista</div>
+          <div style="display:flex;gap:8px;align-items:center;margin:10px 0;">
+            <button class="mock-button">Todas</button>
+            <span style="width:20px;height:20px;background:#e53935;border-radius:50%;display:inline-block;"></span>
+            <span style="width:20px;height:20px;background:#43a047;border-radius:50%;display:inline-block;"></span>
+            <span style="width:20px;height:20px;background:#1e88e5;border-radius:50%;display:inline-block;"></span>
+            <span style="width:20px;height:20px;background:#8e24aa;border-radius:50%;display:inline-block;"></span>
+          </div>
+          <div class="placeholder">A lista mostra somente effects da cor selecionada</div>
+        </div>
+      </div>
+    </div>
+    <div class="card-body">
+      <h3>A. Filtrar por cor especifica</h3>
+      <p>Adiciona chips/swatches no painel de effects. Clicar em vermelho, azul, verde etc. filtra a grade atual.</p>
+    </div>
+  </div>
+
+  <div class="card" data-choice="group" onclick="toggleSelect(this)">
+    <div class="card-image">
+      <div class="mockup">
+        <div class="mockup-header">B. Separar todas por grupos</div>
+        <div class="mockup-body">
+          <div class="mock-sidebar">Red (42)<br>Blue (96)<br>Green (51)<br>Purple (28)<br>Neutral (17)</div>
+          <div class="mock-content">
+            <div class="placeholder">Grade muda conforme o grupo selecionado</div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="card-body">
+      <h3>B. Agrupar por cor dominante</h3>
+      <p>Cria uma navegacao por grupos de cor para explorar todos os effects ja separados.</p>
+    </div>
+  </div>
+
+  <div class="card" data-choice="hybrid" onclick="toggleSelect(this)">
+    <div class="card-image">
+      <div class="mockup">
+        <div class="mockup-header">C. Hibrido: filtro + agrupamento opcional</div>
+        <div class="mockup-body">
+          <div style="display:flex;gap:8px;margin-bottom:10px;">
+            <button class="mock-button">Cor: Azul</button>
+            <button class="mock-button">Agrupar por cor</button>
+            <input class="mock-input" placeholder="Buscar ID/nome">
+          </div>
+          <div class="mock-content">
+            <div class="placeholder">Modo normal: filtra. Modo agrupado: mostra secoes por cor.</div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="card-body">
+      <h3>C. Hibrido recomendado</h3>
+      <p>Comeca simples com filtro por cor e permite alternar para visualizacao agrupada quando quiser separar tudo.</p>
+    </div>
+  </div>
+</div>

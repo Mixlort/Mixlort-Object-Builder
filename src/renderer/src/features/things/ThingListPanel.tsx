@@ -48,13 +48,21 @@ import {
   IconEdit,
   IconDuplicate,
   IconAdd,
-  IconDelete
+  IconDelete,
+  IconLookType
 } from '../../components/Icons'
 import { useTranslation } from 'react-i18next'
 import { PaginationStepper } from '../../components/PaginationStepper'
 import { ThingContextMenu, type ThingContextAction } from './ThingContextMenu'
 import { useSpriteThumbnail } from '../../hooks/use-sprite-thumbnail'
 import type { EffectPreviewFrameMode } from '../../hooks/effect-preview-frame'
+import {
+  EFFECT_COLOR_BUCKETS,
+  EFFECT_COLOR_BUCKET_LABELS,
+  filterEffectsByColorBucket,
+  sortEffectsByColorBucket,
+  type EffectColorFilter
+} from '../../hooks/effect-dominant-color'
 import { debounce } from '../../utils/debounce'
 
 // ---------------------------------------------------------------------------
@@ -248,6 +256,8 @@ export function ThingListPanel({
   const [viewMode, setViewMode] = useState<ViewMode>('grid')
   const [searchInput, setSearchInput] = useState('')
   const [searchFilter, setSearchFilter] = useState('')
+  const [effectColorFilter, setEffectColorFilter] = useState<EffectColorFilter>('all')
+  const [effectColorSortEnabled, setEffectColorSortEnabled] = useState(false)
   const [currentPage, setCurrentPage] = useState(0)
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null)
   const [isDragOver, setIsDragOver] = useState(false)
@@ -338,7 +348,7 @@ export function ThingListPanel({
     }
   }, [currentCategory, things])
 
-  const filteredThings = useMemo((): ThingType[] => {
+  const textFilteredThings = useMemo((): ThingType[] => {
     const filter = searchFilter.trim()
     if (!filter) return categoryThings
 
@@ -354,6 +364,31 @@ export function ThingListPanel({
       return false
     })
   }, [categoryThings, searchFilter])
+
+  const filteredThings = useMemo((): ThingType[] => {
+    if (currentCategory !== ThingCategory.EFFECT) return textFilteredThings
+
+    const spriteStore = useSpriteStore.getState()
+    const getSprite = (spriteId: number) => spriteStore.getSprite(spriteId)
+    let result = filterEffectsByColorBucket(
+      textFilteredThings,
+      effectColorFilter,
+      getSprite,
+      transparentEnabled
+    )
+
+    if (effectColorSortEnabled) {
+      result = sortEffectsByColorBucket(result, getSprite, transparentEnabled)
+    }
+
+    return result
+  }, [
+    currentCategory,
+    textFilteredThings,
+    effectColorFilter,
+    effectColorSortEnabled,
+    transparentEnabled
+  ])
 
   // -------------------------------------------------------------------------
   // Pagination
@@ -1062,6 +1097,19 @@ export function ThingListPanel({
     },
     [viewMode, resetScrollPosition]
   )
+  const handleEffectColorFilterChange = useCallback(
+    (e: React.ChangeEvent<HTMLSelectElement>) => {
+      setEffectColorFilter(e.target.value as EffectColorFilter)
+      setCurrentPage(0)
+      resetScrollPosition()
+    },
+    [resetScrollPosition]
+  )
+  const handleEffectColorSortToggle = useCallback(() => {
+    setEffectColorSortEnabled((enabled) => !enabled)
+    setCurrentPage(0)
+    resetScrollPosition()
+  }, [resetScrollPosition])
 
   // -------------------------------------------------------------------------
   // Render
@@ -1133,6 +1181,38 @@ export function ThingListPanel({
           disabled={!isLoaded}
           data-testid="thing-search-input"
         />
+        {currentCategory === ThingCategory.EFFECT && (
+          <>
+            <select
+              className="h-5 w-[76px] rounded border border-border bg-bg-input px-1 text-[10px] text-text-primary outline-none transition-colors focus:border-border-focus"
+              value={effectColorFilter}
+              onChange={handleEffectColorFilterChange}
+              disabled={!isLoaded}
+              title="Filter effects by dominant color"
+              data-testid="effect-color-filter"
+            >
+              <option value="all">All</option>
+              {EFFECT_COLOR_BUCKETS.map((bucket) => (
+                <option key={bucket} value={bucket}>
+                  {EFFECT_COLOR_BUCKET_LABELS[bucket]}
+                </option>
+              ))}
+            </select>
+            <button
+              title="Sort effects by dominant color"
+              className={`flex h-5 w-5 items-center justify-center rounded text-[10px] font-semibold ${
+                effectColorSortEnabled
+                  ? 'bg-bg-tertiary text-text-primary'
+                  : 'text-text-secondary hover:text-text-primary'
+              }`}
+              onClick={handleEffectColorSortToggle}
+              disabled={!isLoaded}
+              data-testid="effect-color-sort"
+            >
+              <IconLookType size={12} />
+            </button>
+          </>
+        )}
       </div>
 
       {/* Virtual scroll list area */}
