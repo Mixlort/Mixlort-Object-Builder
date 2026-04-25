@@ -63,6 +63,12 @@ export function StatusBar(): React.JSX.Element {
               <StatusItem>
                 {t('labels.sprites')}: {spriteCount}
               </StatusItem>
+              {clientInfo.readOnly && (
+                <>
+                  <StatusSep />
+                  <StatusItem>PXG read-only</StatusItem>
+                </>
+              )}
             </>
           )}
           <span className="ml-auto text-[11px] font-medium capitalize text-accent">{category}</span>

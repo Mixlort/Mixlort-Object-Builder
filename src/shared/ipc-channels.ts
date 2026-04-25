@@ -14,6 +14,7 @@ export const FILE_SHOW_OPEN_DIALOG = 'file:showOpenDialog'
 export const FILE_SHOW_SAVE_DIALOG = 'file:showSaveDialog'
 export const FILE_SHOW_DIRECTORY_DIALOG = 'file:showDirectoryDialog'
 export const FILE_READ_BINARY = 'file:readBinary'
+export const FILE_READ_BINARY_RANGE = 'file:readBinaryRange'
 export const FILE_WRITE_BINARY = 'file:writeBinary'
 export const FILE_READ_TEXT = 'file:readText'
 export const FILE_WRITE_TEXT = 'file:writeText'
@@ -62,6 +63,7 @@ export const PROJECT_SET_SERVER_ITEMS_PATH = 'project:setServerItemsPath'
 export const PROJECT_UPDATE_FEATURES = 'project:updateFeatures'
 export const PROJECT_DISCOVER_CLIENT_FILES = 'project:discoverClientFiles'
 export const PROJECT_DISCOVER_SERVER_ITEM_FILES = 'project:discoverServerItemFiles'
+export const PROJECT_READ_SPRITES = 'project:readSprites'
 
 /** event: main notifies renderer that project state changed */
 export const PROJECT_STATE_CHANGED = 'project:stateChanged'
@@ -165,6 +167,7 @@ export const INVOKE_CHANNELS = [
   FILE_SHOW_SAVE_DIALOG,
   FILE_SHOW_DIRECTORY_DIALOG,
   FILE_READ_BINARY,
+  FILE_READ_BINARY_RANGE,
   FILE_WRITE_BINARY,
   FILE_READ_TEXT,
   FILE_WRITE_TEXT,
@@ -196,6 +199,7 @@ export const INVOKE_CHANNELS = [
   PROJECT_UPDATE_FEATURES,
   PROJECT_DISCOVER_CLIENT_FILES,
   PROJECT_DISCOVER_SERVER_ITEM_FILES,
+  PROJECT_READ_SPRITES,
   // Settings service
   SETTINGS_LOAD,
   SETTINGS_SAVE,

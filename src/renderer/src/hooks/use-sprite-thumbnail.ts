@@ -230,6 +230,7 @@ export function useSpriteThumbnail(
   effectPreviewFrameMode: EffectPreviewFrameMode = 'first'
 ): string | null {
   const transparent = useAppStore((s) => s.clientInfo?.features?.transparency ?? false)
+  const spriteCacheRevision = useSpriteStore((s) => s.spriteCacheRevision)
   const thingSignature = useMemo(() => getThingThumbnailSignature(thing), [thing])
 
   const dataUrl = useMemo(() => {
@@ -237,7 +238,7 @@ export function useSpriteThumbnail(
       return null
     }
 
-    const cacheKey = `${category}:${thing.id}:${transparent ? 1 : 0}:${effectPreviewFrameMode}:${thingSignature}`
+    const cacheKey = `${category}:${thing.id}:${transparent ? 1 : 0}:${effectPreviewFrameMode}:${spriteCacheRevision}:${thingSignature}`
 
     // Check module-level cache
     const cached = thumbnailCache.get(cacheKey)
@@ -254,7 +255,7 @@ export function useSpriteThumbnail(
     } catch {
       return null
     }
-  }, [thing, category, transparent, effectPreviewFrameMode, thingSignature])
+  }, [thing, category, transparent, effectPreviewFrameMode, thingSignature, spriteCacheRevision])
 
   return dataUrl
 }

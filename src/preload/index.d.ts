@@ -25,8 +25,10 @@ import type {
   LoadProjectParams,
   CompileProjectParams,
   MergeProjectParams,
+  SpriteSourceDescriptor,
   LoadProjectResult,
   MergeProjectResult,
+  ReadProjectSpritesResult,
   ObjectBuilderSettings,
   WindowState,
   MenuAction,
@@ -54,8 +56,10 @@ export type {
   LoadProjectParams,
   CompileProjectParams,
   MergeProjectParams,
+  SpriteSourceDescriptor,
   LoadProjectResult,
   MergeProjectResult,
+  ReadProjectSpritesResult,
   ObjectBuilderSettings,
   WindowState,
   MenuAction,
@@ -76,6 +80,8 @@ export interface ElectronFileAPI {
 
   /** Read a file as ArrayBuffer */
   readBinary(filePath: string): Promise<ArrayBuffer>
+  /** Read a byte range from a file as ArrayBuffer */
+  readBinaryRange(filePath: string, position: number, length: number): Promise<ArrayBuffer>
   /** Write an ArrayBuffer to a file */
   writeBinary(filePath: string, data: ArrayBuffer): Promise<void>
   /** Read a file as text string */
@@ -153,6 +159,8 @@ export interface ElectronProjectAPI {
   discoverClientFiles(dir: string): Promise<ClientFilesDiscovery>
   /** Discover server item files (OTB, XML) in a directory */
   discoverServerItemFiles(dir: string): Promise<ServerItemFilesDiscovery>
+  /** Read compressed sprites from the current file-backed sprite source */
+  readSprites(ids: number[]): Promise<ReadProjectSpritesResult>
 
   /** Listen for project state change events. Returns cleanup function. */
   onStateChanged(callback: (state: ProjectState) => void): () => void

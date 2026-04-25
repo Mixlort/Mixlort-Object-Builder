@@ -25,6 +25,7 @@ describe('IPC Channels', () => {
     expect(channels.FILE_SHOW_SAVE_DIALOG).toBe('file:showSaveDialog')
     expect(channels.FILE_SHOW_DIRECTORY_DIALOG).toBe('file:showDirectoryDialog')
     expect(channels.FILE_READ_BINARY).toBe('file:readBinary')
+    expect(channels.FILE_READ_BINARY_RANGE).toBe('file:readBinaryRange')
     expect(channels.FILE_WRITE_BINARY).toBe('file:writeBinary')
     expect(channels.FILE_READ_TEXT).toBe('file:readText')
     expect(channels.FILE_WRITE_TEXT).toBe('file:writeText')
@@ -69,17 +70,19 @@ describe('IPC Channels', () => {
     expect(channels.PROJECT_UPDATE_FEATURES).toBe('project:updateFeatures')
     expect(channels.PROJECT_DISCOVER_CLIENT_FILES).toBe('project:discoverClientFiles')
     expect(channels.PROJECT_DISCOVER_SERVER_ITEM_FILES).toBe('project:discoverServerItemFiles')
+    expect(channels.PROJECT_READ_SPRITES).toBe('project:readSprites')
     expect(channels.PROJECT_STATE_CHANGED).toBe('project:stateChanged')
   })
 
   it('INVOKE_CHANNELS contains all invoke channels', async () => {
     const channels = await import('../../shared/ipc-channels')
 
-    // File service: 11
+    // File service: 12
     expect(channels.INVOKE_CHANNELS).toContain(channels.FILE_SHOW_OPEN_DIALOG)
     expect(channels.INVOKE_CHANNELS).toContain(channels.FILE_SHOW_SAVE_DIALOG)
     expect(channels.INVOKE_CHANNELS).toContain(channels.FILE_SHOW_DIRECTORY_DIALOG)
     expect(channels.INVOKE_CHANNELS).toContain(channels.FILE_READ_BINARY)
+    expect(channels.INVOKE_CHANNELS).toContain(channels.FILE_READ_BINARY_RANGE)
     expect(channels.INVOKE_CHANNELS).toContain(channels.FILE_WRITE_BINARY)
     expect(channels.INVOKE_CHANNELS).toContain(channels.FILE_READ_TEXT)
     expect(channels.INVOKE_CHANNELS).toContain(channels.FILE_WRITE_TEXT)
@@ -97,7 +100,7 @@ describe('IPC Channels', () => {
     expect(channels.INVOKE_CHANNELS).toContain(channels.RECENT_SET)
     expect(channels.INVOKE_CHANNELS).toContain(channels.RECENT_GET_ALL)
     expect(channels.INVOKE_CHANNELS).toContain(channels.RECENT_CLEAR)
-    // Project service: 13
+    // Project service: 14
     expect(channels.INVOKE_CHANNELS).toContain(channels.PROJECT_GET_STATE)
     expect(channels.INVOKE_CHANNELS).toContain(channels.PROJECT_IS_LOADED)
     expect(channels.INVOKE_CHANNELS).toContain(channels.PROJECT_CREATE)
@@ -111,6 +114,7 @@ describe('IPC Channels', () => {
     expect(channels.INVOKE_CHANNELS).toContain(channels.PROJECT_UPDATE_FEATURES)
     expect(channels.INVOKE_CHANNELS).toContain(channels.PROJECT_DISCOVER_CLIENT_FILES)
     expect(channels.INVOKE_CHANNELS).toContain(channels.PROJECT_DISCOVER_SERVER_ITEM_FILES)
+    expect(channels.INVOKE_CHANNELS).toContain(channels.PROJECT_READ_SPRITES)
     // Settings: 8
     expect(channels.INVOKE_CHANNELS).toContain(channels.SETTINGS_LOAD)
     expect(channels.INVOKE_CHANNELS).toContain(channels.SETTINGS_SAVE)
@@ -125,8 +129,8 @@ describe('IPC Channels', () => {
     expect(channels.INVOKE_CHANNELS).toContain(channels.MENU_UPDATE_STATE)
     expect(channels.INVOKE_CHANNELS).toContain(channels.MENU_GET_STATE)
 
-    // Total: 51 invoke channels (32 original + 8 settings + 2 menu + 3 logger + 1 app + 2 recovery + 3 updater)
-    expect(channels.INVOKE_CHANNELS).toHaveLength(51)
+    // Total: 56 invoke channels (file/project/settings/menu/logger/app/object viewer/recovery/updater)
+    expect(channels.INVOKE_CHANNELS).toHaveLength(56)
   })
 
   it('EVENT_CHANNELS contains all event channels', async () => {
@@ -135,7 +139,7 @@ describe('IPC Channels', () => {
     expect(channels.EVENT_CHANNELS).toContain(channels.FILE_CHANGED)
     expect(channels.EVENT_CHANNELS).toContain(channels.PROJECT_STATE_CHANGED)
     expect(channels.EVENT_CHANNELS).toContain(channels.MENU_ACTION)
-    expect(channels.EVENT_CHANNELS).toHaveLength(5)
+    expect(channels.EVENT_CHANNELS).toHaveLength(6)
   })
 
   it('no channel appears in both INVOKE and EVENT lists', async () => {
@@ -160,7 +164,7 @@ describe('IPC Channels', () => {
 
     const allChannels = [...channels.INVOKE_CHANNELS, ...channels.EVENT_CHANNELS]
     for (const channel of allChannels) {
-      expect(channel).toMatch(/^[a-z]+:[a-zA-Z]+$/)
+      expect(channel).toMatch(/^[a-zA-Z]+:[a-zA-Z]+$/)
     }
   })
 })
@@ -221,6 +225,9 @@ describe('IPC Types', () => {
     const discovery: import('../../shared/ipc-types').ClientFilesDiscovery = {
       datFile: null,
       sprFile: null,
+      sprxFile: null,
+      pxgRuntimeMetadataFile: null,
+      pxgRuntimeFlagsFile: null,
       otfiFile: null
     }
     expect(discovery.datFile).toBeNull()

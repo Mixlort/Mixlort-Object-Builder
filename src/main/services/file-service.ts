@@ -192,6 +192,28 @@ export async function readBinaryFile(filePath: string): Promise<ArrayBuffer> {
 }
 
 /**
+ * Reads a byte range from a file as an ArrayBuffer.
+ * Used for large sprite files where reading the whole file would exceed memory limits.
+ */
+export async function readBinaryRange(
+  filePath: string,
+  position: number,
+  length: number
+): Promise<ArrayBuffer> {
+  const handle = await open(filePath, 'r')
+  try {
+    const buffer = Buffer.alloc(length)
+    const { bytesRead } = await handle.read(buffer, 0, length, position)
+    if (bytesRead !== length) {
+      throw new Error(`Could not read ${length} bytes at ${position} from ${filePath}.`)
+    }
+    return buffer.buffer.slice(buffer.byteOffset, buffer.byteOffset + buffer.byteLength)
+  } finally {
+    await handle.close()
+  }
+}
+
+/**
  * Writes an ArrayBuffer to a file (async).
  * Creates parent directories if they don't exist.
  * Equivalent to legacy SaveHelper / FileStream write operations.

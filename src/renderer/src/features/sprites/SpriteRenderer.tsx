@@ -104,6 +104,7 @@ export function SpriteRenderer({
   // Store data for sprite resolution
   const spriteAccessor = useSpriteStore((s) => s.spriteAccessor)
   const spriteOverrides = useSpriteStore((s) => s.sprites)
+  const spriteCacheRevision = useSpriteStore((s) => s.spriteCacheRevision)
   const clientInfo = useAppStore((s) => s.clientInfo)
   const transparent = clientInfo?.features?.transparency ?? false
 
@@ -113,6 +114,25 @@ export function SpriteRenderer({
   const inlineSprites =
     thingData?.sprites.get(frameGroupType) ?? thingData?.sprites.get(FGT.DEFAULT) ?? []
   const isOutfit = thing?.category === ThingCategory.OUTFIT
+  const spriteIdsKey = useMemo(() => {
+    if (!frameGroup) return ''
+    const ids = new Set<number>()
+    for (const spriteId of frameGroup.spriteIndex) {
+      if (spriteId > 0) ids.add(spriteId)
+    }
+    return Array.from(ids)
+      .sort((a, b) => a - b)
+      .join(',')
+  }, [frameGroup])
+
+  useEffect(() => {
+    if (!spriteIdsKey) return
+    const ids = spriteIdsKey
+      .split(',')
+      .map((id) => Number(id))
+      .filter((id) => Number.isInteger(id) && id > 0)
+    void useSpriteStore.getState().ensureSpritesCached(ids)
+  }, [spriteIdsKey])
 
   // Create sprite pixel provider
   const getPixels: SpritePixelProvider = useCallback(
@@ -141,7 +161,7 @@ export function SpriteRenderer({
       return null
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [inlineSprites, spriteAccessor, spriteOverrides, frameGroup, transparent]
+    [inlineSprites, spriteAccessor, spriteOverrides, spriteCacheRevision, frameGroup, transparent]
   )
 
   // Build sprite sheet (memoized)

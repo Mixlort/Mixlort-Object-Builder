@@ -14,6 +14,10 @@
 import { create } from 'zustand'
 import { LruCache } from '../utils/lru-cache'
 import { SpriteAccessor } from '../services/spr/sprite-accessor'
+import type {
+  FileBackedPxgSpriteSourceDescriptor,
+  SpriteSourceDescriptor
+} from '../../../shared/project-state'
 
 // ---------------------------------------------------------------------------
 // Sprite operation tracking
@@ -46,6 +50,21 @@ export interface SpriteStoreState {
    */
   spriteAccessor: SpriteAccessor | null
 
+  /** File-backed PXG sprite source. Sprites are fetched from main process on demand. */
+  fileBackedSource: FileBackedPxgSpriteSourceDescriptor | null
+
+  /** Cache for sprites fetched from a file-backed source. Not treated as modified data. */
+  cachedSprites: Map<number, Uint8Array>
+
+  /** Monotonic counter used by React subscribers after cache updates. */
+  spriteCacheRevision: number
+
+  /** True while PXG file-backed sprites are being fetched from disk. */
+  spriteCacheLoading: boolean
+
+  /** Number of queued/in-flight PXG sprite ids. Used for lightweight UI feedback. */
+  spriteCachePendingCount: number
+
   /**
    * IDs of sprites explicitly deleted (to shadow accessor entries).
    * Only needed when using SpriteAccessor.
@@ -74,7 +93,9 @@ export interface SpriteStoreActions {
   // Bulk loading
   loadSprites(sprites: Map<number, Uint8Array>): void
   loadFromBuffer(buffer: ArrayBuffer, extended: boolean): void
+  loadFileBacked(source: SpriteSourceDescriptor): void
   clearSprites(): void
+  ensureSpritesCached(ids: number[]): Promise<void>
 
   // Individual sprite CRUD
   getSprite(id: number): Uint8Array | undefined
@@ -125,6 +146,155 @@ export interface SpriteStoreActions {
 
 const DEFAULT_CACHE_MAX_SIZE = 2000
 
+type SpriteStore = SpriteStoreState & SpriteStoreActions
+type SpriteStoreSet = (
+  partial: Partial<SpriteStore> | ((state: SpriteStore) => Partial<SpriteStore>),
+  replace?: false
+) => void
+type SpriteStoreGet = () => SpriteStore
+
+type SpriteCacheWaiter = {
+  ids: Set<number>
+  resolve: () => void
+  reject: (error: unknown) => void
+}
+
+const queuedSpriteCacheIds = new Set<number>()
+const inFlightSpriteCacheIds = new Set<number>()
+const emptySpriteCacheIds = new Set<number>()
+let spriteCacheFlushTimer: ReturnType<typeof setTimeout> | null = null
+let spriteCacheWaiters: SpriteCacheWaiter[] = []
+
+function getSpriteCacheWorkCount(): number {
+  return queuedSpriteCacheIds.size + inFlightSpriteCacheIds.size
+}
+
+function clearSpriteCacheQueue(): void {
+  if (spriteCacheFlushTimer) {
+    clearTimeout(spriteCacheFlushTimer)
+    spriteCacheFlushTimer = null
+  }
+  queuedSpriteCacheIds.clear()
+  inFlightSpriteCacheIds.clear()
+  emptySpriteCacheIds.clear()
+  for (const waiter of spriteCacheWaiters.splice(0)) {
+    waiter.resolve()
+  }
+}
+
+function isSpriteCachedOrUnavailable(
+  state: SpriteStoreState,
+  source: FileBackedPxgSpriteSourceDescriptor,
+  id: number
+): boolean {
+  if (id < 1 || id > source.spriteCount) return true
+  if (state.deletedSpriteIds.has(id)) return true
+  return state.sprites.has(id) || state.cachedSprites.has(id) || emptySpriteCacheIds.has(id)
+}
+
+function updateSpriteCacheLoadingState(
+  set: SpriteStoreSet
+): void {
+  const pendingCount = getSpriteCacheWorkCount()
+  set({
+    spriteCacheLoading: pendingCount > 0,
+    spriteCachePendingCount: pendingCount
+  })
+}
+
+function resolveCompletedSpriteCacheWaiters(get: SpriteStoreGet): void {
+  const state = get()
+  const remaining: SpriteCacheWaiter[] = []
+  for (const waiter of spriteCacheWaiters) {
+    let complete = true
+    for (const id of waiter.ids) {
+      if (
+        queuedSpriteCacheIds.has(id) ||
+        inFlightSpriteCacheIds.has(id) ||
+        (!state.cachedSprites.has(id) &&
+          !state.sprites.has(id) &&
+          !state.deletedSpriteIds.has(id) &&
+          !emptySpriteCacheIds.has(id))
+      ) {
+        complete = false
+        break
+      }
+    }
+
+    if (complete) {
+      waiter.resolve()
+    } else {
+      remaining.push(waiter)
+    }
+  }
+  spriteCacheWaiters = remaining
+}
+
+function rejectSpriteCacheWaiters(error: unknown): void {
+  for (const waiter of spriteCacheWaiters.splice(0)) {
+    waiter.reject(error)
+  }
+}
+
+function scheduleSpriteCacheFlush(get: SpriteStoreGet, set: SpriteStoreSet): void {
+  if (spriteCacheFlushTimer) return
+  spriteCacheFlushTimer = setTimeout(() => {
+    spriteCacheFlushTimer = null
+    void flushSpriteCacheQueue(get, set)
+  }, 0)
+}
+
+async function flushSpriteCacheQueue(get: SpriteStoreGet, set: SpriteStoreSet): Promise<void> {
+  const ids = Array.from(queuedSpriteCacheIds)
+  if (ids.length === 0) {
+    updateSpriteCacheLoadingState(set)
+    resolveCompletedSpriteCacheWaiters(get)
+    return
+  }
+
+  queuedSpriteCacheIds.clear()
+  for (const id of ids) {
+    inFlightSpriteCacheIds.add(id)
+  }
+  updateSpriteCacheLoadingState(set)
+
+  try {
+    const result = await window.api.project.readSprites(ids)
+    const returnedIds = new Set(result.entries.map(([id]) => id))
+    if (result.entries.length > 0) {
+      set((current) => {
+        const cachedSprites = new Map(current.cachedSprites)
+        for (const [id, data] of result.entries) {
+          cachedSprites.set(id, data)
+          emptySpriteCacheIds.delete(id)
+        }
+        return {
+          cachedSprites,
+          spriteCacheRevision: current.spriteCacheRevision + 1
+        }
+      })
+    }
+    for (const id of ids) {
+      if (!returnedIds.has(id)) {
+        emptySpriteCacheIds.add(id)
+      }
+    }
+  } catch (error) {
+    rejectSpriteCacheWaiters(error)
+    throw error
+  } finally {
+    for (const id of ids) {
+      inFlightSpriteCacheIds.delete(id)
+    }
+    updateSpriteCacheLoadingState(set)
+    resolveCompletedSpriteCacheWaiters(get)
+
+    if (queuedSpriteCacheIds.size > 0) {
+      scheduleSpriteCacheFlush(get, set)
+    }
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Store creation
 // ---------------------------------------------------------------------------
@@ -133,6 +303,11 @@ export const useSpriteStore = create<SpriteStoreState & SpriteStoreActions>()((s
   // --- Initial state ---
   sprites: new Map(),
   spriteAccessor: null,
+  fileBackedSource: null,
+  cachedSprites: new Map(),
+  spriteCacheRevision: 0,
+  spriteCacheLoading: false,
+  spriteCachePendingCount: 0,
   deletedSpriteIds: new Set(),
   totalSpriteCount: 0,
   renderedCache: new LruCache<number, string>(DEFAULT_CACHE_MAX_SIZE),
@@ -144,12 +319,18 @@ export const useSpriteStore = create<SpriteStoreState & SpriteStoreActions>()((s
   // --- Bulk loading ---
 
   loadSprites(sprites) {
+    clearSpriteCacheQueue()
     const accessor = get().spriteAccessor
     if (accessor) accessor.dispose()
     get().renderedCache.clear()
     set({
       sprites: new Map(sprites),
       spriteAccessor: null,
+      fileBackedSource: null,
+      cachedSprites: new Map(),
+      spriteCacheRevision: get().spriteCacheRevision + 1,
+      spriteCacheLoading: false,
+      spriteCachePendingCount: 0,
       deletedSpriteIds: new Set(),
       totalSpriteCount: sprites.size,
       renderedCache: new LruCache<number, string>(get().renderedCache.maxSize),
@@ -160,6 +341,7 @@ export const useSpriteStore = create<SpriteStoreState & SpriteStoreActions>()((s
   },
 
   loadFromBuffer(buffer, extended) {
+    clearSpriteCacheQueue()
     const oldAccessor = get().spriteAccessor
     if (oldAccessor) oldAccessor.dispose()
     get().renderedCache.clear()
@@ -168,6 +350,11 @@ export const useSpriteStore = create<SpriteStoreState & SpriteStoreActions>()((s
     set({
       sprites: new Map(),
       spriteAccessor: accessor,
+      fileBackedSource: null,
+      cachedSprites: new Map(),
+      spriteCacheRevision: get().spriteCacheRevision + 1,
+      spriteCacheLoading: false,
+      spriteCachePendingCount: 0,
       deletedSpriteIds: new Set(),
       totalSpriteCount: accessor.spriteCount,
       renderedCache: new LruCache<number, string>(get().renderedCache.maxSize),
@@ -177,13 +364,46 @@ export const useSpriteStore = create<SpriteStoreState & SpriteStoreActions>()((s
     })
   },
 
+  loadFileBacked(source) {
+    clearSpriteCacheQueue()
+    const oldAccessor = get().spriteAccessor
+    if (oldAccessor) oldAccessor.dispose()
+    get().renderedCache.clear()
+
+    if (source.kind !== 'file-backed-pxg') {
+      throw new Error(`Unsupported file-backed sprite source: ${source.kind}`)
+    }
+
+    set({
+      sprites: new Map(),
+      spriteAccessor: null,
+      fileBackedSource: source,
+      cachedSprites: new Map(),
+      spriteCacheRevision: get().spriteCacheRevision + 1,
+      spriteCacheLoading: false,
+      spriteCachePendingCount: 0,
+      deletedSpriteIds: new Set(),
+      totalSpriteCount: source.spriteCount,
+      renderedCache: new LruCache<number, string>(get().renderedCache.maxSize),
+      changedSpriteIds: [],
+      selectedSpriteId: null,
+      selectedSpriteIds: []
+    })
+  },
+
   clearSprites() {
+    clearSpriteCacheQueue()
     const accessor = get().spriteAccessor
     if (accessor) accessor.dispose()
     get().renderedCache.clear()
     set({
       sprites: new Map(),
       spriteAccessor: null,
+      fileBackedSource: null,
+      cachedSprites: new Map(),
+      spriteCacheRevision: get().spriteCacheRevision + 1,
+      spriteCacheLoading: false,
+      spriteCachePendingCount: 0,
       deletedSpriteIds: new Set(),
       totalSpriteCount: 0,
       renderedCache: new LruCache<number, string>(DEFAULT_CACHE_MAX_SIZE),
@@ -201,6 +421,8 @@ export const useSpriteStore = create<SpriteStoreState & SpriteStoreActions>()((s
     // Check overrides first
     const override = state.sprites.get(id)
     if (override !== undefined) return override
+    const cached = state.cachedSprites.get(id)
+    if (cached !== undefined) return cached
     // Check if deleted
     if (state.deletedSpriteIds.has(id)) return undefined
     // Fall back to accessor
@@ -210,15 +432,18 @@ export const useSpriteStore = create<SpriteStoreState & SpriteStoreActions>()((s
 
   setSprite(id, compressed) {
     get().renderedCache.delete(id)
+    emptySpriteCacheIds.delete(id)
     set((state) => {
       const newSprites = new Map(state.sprites)
       newSprites.set(id, compressed)
+      const newCache = new Map(state.cachedSprites)
+      newCache.delete(id)
       const newDeleted = new Set(state.deletedSpriteIds)
       newDeleted.delete(id) // Un-delete if was deleted
       const changedSpriteIds = state.changedSpriteIds.includes(id)
         ? state.changedSpriteIds
         : [...state.changedSpriteIds, id]
-      return { sprites: newSprites, deletedSpriteIds: newDeleted, changedSpriteIds }
+      return { sprites: newSprites, cachedSprites: newCache, deletedSpriteIds: newDeleted, changedSpriteIds }
     })
   },
 
@@ -227,15 +452,20 @@ export const useSpriteStore = create<SpriteStoreState & SpriteStoreActions>()((s
     set((state) => {
       const newSprites = new Map(state.sprites)
       newSprites.delete(id)
+      const newCache = new Map(state.cachedSprites)
+      newCache.delete(id)
       const newDeleted = new Set(state.deletedSpriteIds)
       // Mark as deleted to shadow accessor
       if (state.spriteAccessor && state.spriteAccessor.has(id)) {
         newDeleted.add(id)
       }
+      if (state.fileBackedSource && id >= 1 && id <= state.fileBackedSource.spriteCount) {
+        newDeleted.add(id)
+      }
       const changedSpriteIds = state.changedSpriteIds.includes(id)
         ? state.changedSpriteIds
         : [...state.changedSpriteIds, id]
-      return { sprites: newSprites, deletedSpriteIds: newDeleted, changedSpriteIds }
+      return { sprites: newSprites, cachedSprites: newCache, deletedSpriteIds: newDeleted, changedSpriteIds }
     })
   },
 
@@ -248,6 +478,9 @@ export const useSpriteStore = create<SpriteStoreState & SpriteStoreActions>()((s
     }
     if (state.spriteAccessor && state.spriteAccessor.spriteCount > maxId) {
       maxId = state.spriteAccessor.spriteCount
+    }
+    if (state.fileBackedSource && state.fileBackedSource.spriteCount > maxId) {
+      maxId = state.fileBackedSource.spriteCount
     }
     const newId = maxId + 1
 
@@ -272,20 +505,24 @@ export const useSpriteStore = create<SpriteStoreState & SpriteStoreActions>()((s
     const cache = get().renderedCache
     for (const [id] of entries) {
       cache.delete(id)
+      emptySpriteCacheIds.delete(id)
     }
     set((state) => {
       const newSprites = new Map(state.sprites)
+      const newCache = new Map(state.cachedSprites)
       const newDeleted = new Set(state.deletedSpriteIds)
       const changedSet = new Set(state.changedSpriteIds)
 
       for (const [id, compressed] of entries) {
         newSprites.set(id, compressed)
+        newCache.delete(id)
         newDeleted.delete(id) // Un-delete if was deleted
         changedSet.add(id)
       }
 
       return {
         sprites: newSprites,
+        cachedSprites: newCache,
         deletedSpriteIds: newDeleted,
         changedSpriteIds: Array.from(changedSet)
       }
@@ -299,12 +536,17 @@ export const useSpriteStore = create<SpriteStoreState & SpriteStoreActions>()((s
     }
     set((state) => {
       const newSprites = new Map(state.sprites)
+      const newCache = new Map(state.cachedSprites)
       const newDeleted = new Set(state.deletedSpriteIds)
       const changedSet = new Set(state.changedSpriteIds)
 
       for (const id of ids) {
         newSprites.delete(id)
+        newCache.delete(id)
         if (state.spriteAccessor && state.spriteAccessor.has(id)) {
+          newDeleted.add(id)
+        }
+        if (state.fileBackedSource && id >= 1 && id <= state.fileBackedSource.spriteCount) {
           newDeleted.add(id)
         }
         changedSet.add(id)
@@ -312,6 +554,7 @@ export const useSpriteStore = create<SpriteStoreState & SpriteStoreActions>()((s
 
       return {
         sprites: newSprites,
+        cachedSprites: newCache,
         deletedSpriteIds: newDeleted,
         changedSpriteIds: Array.from(changedSet)
       }
@@ -331,6 +574,12 @@ export const useSpriteStore = create<SpriteStoreState & SpriteStoreActions>()((s
           const data = state.spriteAccessor.get(id)
           if (data) result.set(id, data)
         }
+      }
+    }
+
+    for (const [id, data] of state.cachedSprites) {
+      if (!state.deletedSpriteIds.has(id)) {
+        result.set(id, data)
       }
     }
 
@@ -453,6 +702,14 @@ export const useSpriteStore = create<SpriteStoreState & SpriteStoreActions>()((s
 
   getSpriteCount() {
     const state = get()
+    if (state.fileBackedSource) {
+      let count = state.fileBackedSource.spriteCount
+      for (const id of state.sprites.keys()) {
+        if (id > state.fileBackedSource.spriteCount) count++
+      }
+      count -= state.deletedSpriteIds.size
+      return count
+    }
     if (state.spriteAccessor) {
       // Accessor count + new overrides (IDs beyond accessor range) - deleted
       let count = state.spriteAccessor.spriteCount
@@ -470,11 +727,45 @@ export const useSpriteStore = create<SpriteStoreState & SpriteStoreActions>()((s
     if (state.sprites.has(id)) return true
     if (state.deletedSpriteIds.has(id)) return false
     if (state.spriteAccessor) return state.spriteAccessor.has(id)
+    if (state.fileBackedSource) return id >= 1 && id <= state.fileBackedSource.spriteCount
     return false
   },
 
   isSpriteChanged(id) {
     return get().changedSpriteIds.includes(id)
+  },
+
+  async ensureSpritesCached(ids) {
+    const state = get()
+    const source = state.fileBackedSource
+    if (!source) return
+
+    const needed = new Set<number>()
+    const seen = new Set<number>()
+    for (const id of ids) {
+      if (seen.has(id) || id < 1 || id > source.spriteCount) continue
+      seen.add(id)
+      if (isSpriteCachedOrUnavailable(state, source, id)) continue
+      needed.add(id)
+    }
+
+    if (needed.size === 0) return
+    for (const id of needed) {
+      if (!inFlightSpriteCacheIds.has(id)) {
+        queuedSpriteCacheIds.add(id)
+      }
+    }
+    updateSpriteCacheLoadingState(set)
+
+    const promise = new Promise<void>((resolve, reject) => {
+      spriteCacheWaiters.push({ ids: needed, resolve, reject })
+    })
+
+    if (queuedSpriteCacheIds.size > 0) {
+      scheduleSpriteCacheFlush(get, set)
+    }
+    resolveCompletedSpriteCacheWaiters(get)
+    return promise
   }
 }))
 
@@ -483,12 +774,18 @@ export const useSpriteStore = create<SpriteStoreState & SpriteStoreActions>()((s
 // ---------------------------------------------------------------------------
 
 export function resetSpriteStore(): void {
+  clearSpriteCacheQueue()
   const state = useSpriteStore.getState()
   state.renderedCache.clear()
   if (state.spriteAccessor) state.spriteAccessor.dispose()
   useSpriteStore.setState({
     sprites: new Map(),
     spriteAccessor: null,
+    fileBackedSource: null,
+    cachedSprites: new Map(),
+    spriteCacheRevision: 0,
+    spriteCacheLoading: false,
+    spriteCachePendingCount: 0,
     deletedSpriteIds: new Set(),
     totalSpriteCount: 0,
     renderedCache: new LruCache<number, string>(DEFAULT_CACHE_MAX_SIZE),
@@ -505,6 +802,12 @@ export function resetSpriteStore(): void {
 
 export const selectSprites = (state: SpriteStoreState) => state.sprites
 export const selectSpriteAccessor = (state: SpriteStoreState) => state.spriteAccessor
+export const selectFileBackedSource = (state: SpriteStoreState) => state.fileBackedSource
+export const selectCachedSprites = (state: SpriteStoreState) => state.cachedSprites
+export const selectSpriteCacheRevision = (state: SpriteStoreState) => state.spriteCacheRevision
+export const selectSpriteCacheLoading = (state: SpriteStoreState) => state.spriteCacheLoading
+export const selectSpriteCachePendingCount = (state: SpriteStoreState) =>
+  state.spriteCachePendingCount
 export const selectRenderedCache = (state: SpriteStoreState) => state.renderedCache
 export const selectSelectedSpriteId = (state: SpriteStoreState) => state.selectedSpriteId
 export const selectSelectedSpriteIds = (state: SpriteStoreState) => state.selectedSpriteIds
@@ -513,18 +816,21 @@ export const selectPendingOperation = (state: SpriteStoreState) => state.pending
 export const selectHasPendingOperation = (state: SpriteStoreState) =>
   state.pendingOperation !== null
 export const selectSpriteStoreCount = (state: SpriteStoreState) =>
-  state.spriteAccessor
-    ? state.spriteAccessor.spriteCount + countNewOverrides(state) - state.deletedSpriteIds.size
-    : state.sprites.size
+  state.fileBackedSource
+    ? state.fileBackedSource.spriteCount + countNewOverrides(state) - state.deletedSpriteIds.size
+    : state.spriteAccessor
+      ? state.spriteAccessor.spriteCount + countNewOverrides(state) - state.deletedSpriteIds.size
+      : state.sprites.size
 export const selectHasChangedSprites = (state: SpriteStoreState) =>
   state.changedSpriteIds.length > 0
 
 // Helper for selector
 function countNewOverrides(state: SpriteStoreState): number {
-  if (!state.spriteAccessor) return 0
+  const baseCount = state.fileBackedSource?.spriteCount ?? state.spriteAccessor?.spriteCount ?? 0
+  if (baseCount === 0) return 0
   let count = 0
   for (const id of state.sprites.keys()) {
-    if (id > state.spriteAccessor.spriteCount) count++
+    if (id > baseCount) count++
   }
   return count
 }

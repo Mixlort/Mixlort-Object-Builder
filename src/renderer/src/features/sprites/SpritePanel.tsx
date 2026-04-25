@@ -114,6 +114,40 @@ function renderSpriteToCanvas(
   }
 }
 
+async function encodeSpritePng(pixels: Uint8Array): Promise<ArrayBuffer> {
+  const canvas = document.createElement('canvas')
+  canvas.width = SPRITE_DEFAULT_SIZE
+  canvas.height = SPRITE_DEFAULT_SIZE
+  const ctx = canvas.getContext('2d')
+  if (!ctx) {
+    throw new Error('Canvas 2D context unavailable')
+  }
+
+  ctx.putImageData(
+    new ImageData(
+      argbToRgba(pixels) as Uint8ClampedArray<ArrayBuffer>,
+      SPRITE_DEFAULT_SIZE,
+      SPRITE_DEFAULT_SIZE
+    ),
+    0,
+    0
+  )
+
+  const blob = await new Promise<Blob | null>((resolve) => {
+    canvas.toBlob(resolve, 'image/png')
+  })
+  canvas.width = 0
+  canvas.height = 0
+  if (!blob) {
+    throw new Error('Failed to encode sprite PNG')
+  }
+  return blob.arrayBuffer()
+}
+
+function joinFilePath(directory: string, fileName: string): string {
+  return `${directory.replace(/[\\/]+$/u, '')}/${fileName}`
+}
+
 // ---------------------------------------------------------------------------
 // Sprite slot data (precomputed)
 // ---------------------------------------------------------------------------
@@ -306,6 +340,7 @@ export function SpritePanel({
   // Track sprite accessor/overrides changes to re-derive sprite slots
   const spriteAccessor = useSpriteStore((s) => s.spriteAccessor)
   const spriteOverrides = useSpriteStore((s) => s.sprites)
+  const spriteCacheRevision = useSpriteStore((s) => s.spriteCacheRevision)
   const resolvedPageSize = Math.max(1, pageSize)
 
   // Derived data
@@ -317,6 +352,25 @@ export function SpritePanel({
   const isOutfit = thing?.category === ThingCategory.OUTFIT
   const hasWalkingGroup = thing?.frameGroups[FrameGroupType.WALKING] != null
   const transparent = clientInfo?.features?.transparency ?? false
+  const spriteIdsKey = useMemo(() => {
+    if (!spriteIndex.length) return ''
+    const ids = new Set<number>()
+    for (const spriteId of spriteIndex) {
+      if (spriteId > 0) ids.add(spriteId)
+    }
+    return Array.from(ids)
+      .sort((a, b) => a - b)
+      .join(',')
+  }, [spriteIndex])
+
+  useEffect(() => {
+    if (!spriteIdsKey) return
+    const ids = spriteIdsKey
+      .split(',')
+      .map((id) => Number(id))
+      .filter((id) => Number.isInteger(id) && id > 0)
+    void useSpriteStore.getState().ensureSpritesCached(ids)
+  }, [spriteIdsKey])
 
   // Precompute sprite slot data
   const spriteSlots = useMemo((): SpriteSlot[] => {
@@ -345,7 +399,15 @@ export function SpritePanel({
       return { index: idx, spriteId, pixels: null }
     })
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [frameGroup, spriteIndex, inlineSprites, spriteAccessor, spriteOverrides, transparent])
+  }, [
+    frameGroup,
+    spriteIndex,
+    inlineSprites,
+    spriteAccessor,
+    spriteOverrides,
+    spriteCacheRevision,
+    transparent
+  ])
 
   // -------------------------------------------------------------------------
   // Pagination
@@ -1019,6 +1081,45 @@ export function SpritePanel({
     transparent
   ])
 
+  const handleExportSelected = useCallback(async () => {
+    if (!window.api?.file || selectedSpriteTargets.length === 0) return
+
+    const result = await window.api.file.showDirectoryDialog({
+      title: 'Select Sprite Export Folder'
+    })
+    if (result.canceled || !result.directoryPath) return
+
+    const appStore = useAppStore.getState()
+    const spriteStore = useSpriteStore.getState()
+    const spriteIds = selectedSpriteTargets.map((target) => target.spriteId)
+
+    try {
+      await spriteStore.ensureSpritesCached(spriteIds)
+
+      let exportedCount = 0
+      for (const spriteId of spriteIds) {
+        const compressed = useSpriteStore.getState().getSprite(spriteId)
+        if (!compressed || compressed.length === 0) {
+          appStore.addLog('warning', `Sprite #${spriteId} has no pixel data and was skipped.`)
+          continue
+        }
+
+        const pixels = uncompressPixels(compressed, transparent)
+        const buffer = await encodeSpritePng(pixels)
+        await window.api.file.writeBinary(
+          joinFilePath(result.directoryPath, `sprite_${spriteId}.png`),
+          buffer
+        )
+        exportedCount++
+      }
+
+      appStore.addLog('info', `Exported ${exportedCount} sprite(s).`)
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err)
+      appStore.addLog('error', `Failed to export sprites: ${message}`)
+    }
+  }, [selectedSpriteTargets, transparent])
+
   // -------------------------------------------------------------------------
   // Render: empty state
   // -------------------------------------------------------------------------
@@ -1147,9 +1248,12 @@ export function SpritePanel({
         </button>
         <button
           className="flex-1 rounded px-1 py-0.5 text-[10px] text-text-secondary hover:bg-bg-tertiary hover:text-text-primary disabled:opacity-40"
-          disabled={selectedSlot === null}
-          title="Export selected sprite as image"
+          disabled={selectedSpriteTargets.length === 0}
+          title="Export selected sprite(s) as PNG"
           data-testid="sprite-export-btn"
+          onClick={() => {
+            void handleExportSelected()
+          }}
         >
           {t('labels.export')}
         </button>

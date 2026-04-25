@@ -238,7 +238,7 @@ describe('loadProject', () => {
     })
 
     expect(result.datBuffer.byteLength).toBe(8)
-    expect(result.sprBuffer.byteLength).toBe(6)
+    expect(result.sprBuffer?.byteLength).toBe(6)
     expect(result.otbBuffer).toBeNull()
     expect(result.xmlContent).toBeNull()
     expect(result.otfiContent).toBeNull()

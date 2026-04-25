@@ -16,6 +16,7 @@ import {
   FILE_SHOW_SAVE_DIALOG,
   FILE_SHOW_DIRECTORY_DIALOG,
   FILE_READ_BINARY,
+  FILE_READ_BINARY_RANGE,
   FILE_WRITE_BINARY,
   FILE_READ_TEXT,
   FILE_WRITE_TEXT,
@@ -48,6 +49,7 @@ import {
   PROJECT_UPDATE_FEATURES,
   PROJECT_DISCOVER_CLIENT_FILES,
   PROJECT_DISCOVER_SERVER_ITEM_FILES,
+  PROJECT_READ_SPRITES,
   PROJECT_STATE_CHANGED,
   // Settings service
   SETTINGS_LOAD,
@@ -124,6 +126,9 @@ const api = {
       ipcRenderer.invoke(FILE_SHOW_DIRECTORY_DIALOG, options),
 
     readBinary: (filePath: string) => ipcRenderer.invoke(FILE_READ_BINARY, filePath),
+
+    readBinaryRange: (filePath: string, position: number, length: number) =>
+      ipcRenderer.invoke(FILE_READ_BINARY_RANGE, filePath, position, length),
 
     writeBinary: (filePath: string, data: ArrayBuffer) =>
       ipcRenderer.invoke(FILE_WRITE_BINARY, filePath, data),
@@ -276,6 +281,8 @@ const api = {
 
     discoverServerItemFiles: (dir: string) =>
       ipcRenderer.invoke(PROJECT_DISCOVER_SERVER_ITEM_FILES, dir),
+
+    readSprites: (ids: number[]) => ipcRenderer.invoke(PROJECT_READ_SPRITES, ids),
 
     onStateChanged: (
       callback: (state: {

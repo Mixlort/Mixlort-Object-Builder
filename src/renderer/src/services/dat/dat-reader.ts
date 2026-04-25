@@ -19,6 +19,7 @@ import {
   createFrameGroup,
   createFrameDuration,
   getFrameGroupTotalSprites,
+  getFrameGroupSpriteIndex,
   type ClientFeatures,
   Direction,
   MetadataFlags1,
@@ -28,9 +29,17 @@ import {
   MetadataFlags5,
   MetadataFlags6,
   LAST_FLAG,
-  SPRITE_DEFAULT_SIZE,
-  SPRITE_DEFAULT_DATA_SIZE
+  SPRITE_DEFAULT_SIZE
 } from '../../types'
+import {
+  PXG_RUNTIME_FLAGS,
+  getPxgRuntimeItemFlags,
+  hasPxgRuntimeFlag,
+  type PxgDatRuntime,
+  type PxgRuntimeFlags,
+  type PxgRuntimeMetadata,
+  type PxgRuntimeTexture
+} from '../pxg-runtime'
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -49,6 +58,8 @@ const MIN_ITEM_ID = 100
 const MIN_OUTFIT_ID = 1
 const MIN_EFFECT_ID = 1
 const MIN_MISSILE_ID = 1
+
+const MAX_THING_SPRITES = 1048576
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -84,25 +95,43 @@ export function readDat(
   buffer: ArrayBuffer,
   version: number,
   features: ClientFeatures,
-  getDefaultDuration: DefaultDurationFn
+  getDefaultDuration: DefaultDurationFn,
+  runtime?: PxgDatRuntime | null
 ): DatReadResult {
   const reader = new BinaryReader(buffer)
+  const runtimeMetadata = runtime?.metadata ?? null
+  const runtimeContext: RuntimeReadContext = {
+    metadata: runtimeMetadata,
+    textureIndex: 0
+  }
 
   // Read header
   reader.position = HEADER_SIGNATURE
   const signature = reader.readUint32()
 
-  reader.position = HEADER_ITEMS_COUNT
-  const maxItemId = reader.readUint16()
+  let maxItemId: number
+  let maxOutfitId: number
+  let maxEffectId: number
+  let maxMissileId: number
 
-  reader.position = HEADER_OUTFITS_COUNT
-  const maxOutfitId = reader.readUint16()
+  if (runtimeMetadata) {
+    maxItemId = runtimeMetadata.maxItemId
+    maxOutfitId = runtimeMetadata.maxOutfitId
+    maxEffectId = runtimeMetadata.maxEffectId
+    maxMissileId = runtimeMetadata.maxMissileId
+  } else {
+    reader.position = HEADER_ITEMS_COUNT
+    maxItemId = reader.readUint16()
 
-  reader.position = HEADER_EFFECTS_COUNT
-  const maxEffectId = reader.readUint16()
+    reader.position = HEADER_OUTFITS_COUNT
+    maxOutfitId = reader.readUint16()
 
-  reader.position = HEADER_MISSILES_COUNT
-  const maxMissileId = reader.readUint16()
+    reader.position = HEADER_EFFECTS_COUNT
+    maxEffectId = reader.readUint16()
+
+    reader.position = HEADER_MISSILES_COUNT
+    maxMissileId = reader.readUint16()
+  }
 
   // Position after header for sequential reading
   reader.position = HEADER_SIZE
@@ -117,7 +146,7 @@ export function readDat(
     thing.id = id
     thing.category = TC.ITEM
     readProps(reader, thing)
-    readTexturePatterns(reader, thing, features, getDefaultDuration, hasPatternZ)
+    readTexturePatterns(reader, thing, features, getDefaultDuration, hasPatternZ, runtimeContext)
     items.push(thing)
   }
 
@@ -128,7 +157,7 @@ export function readDat(
     thing.id = id
     thing.category = TC.OUTFIT
     readProps(reader, thing)
-    readTexturePatterns(reader, thing, features, getDefaultDuration, hasPatternZ)
+    readTexturePatterns(reader, thing, features, getDefaultDuration, hasPatternZ, runtimeContext)
     outfits.push(thing)
   }
 
@@ -139,7 +168,7 @@ export function readDat(
     thing.id = id
     thing.category = TC.EFFECT
     readProps(reader, thing)
-    readTexturePatterns(reader, thing, features, getDefaultDuration, hasPatternZ)
+    readTexturePatterns(reader, thing, features, getDefaultDuration, hasPatternZ, runtimeContext)
     effects.push(thing)
   }
 
@@ -150,9 +179,11 @@ export function readDat(
     thing.id = id
     thing.category = TC.MISSILE
     readProps(reader, thing)
-    readTexturePatterns(reader, thing, features, getDefaultDuration, hasPatternZ)
+    readTexturePatterns(reader, thing, features, getDefaultDuration, hasPatternZ, runtimeContext)
     missiles.push(thing)
   }
+
+  applyPxgRuntimeFlags(items, runtime?.flags ?? null)
 
   return {
     signature,
@@ -171,16 +202,25 @@ export function readDat(
 // Texture patterns (shared across all versions)
 // ---------------------------------------------------------------------------
 
+interface RuntimeReadContext {
+  metadata: PxgRuntimeMetadata | null
+  textureIndex: number
+}
+
 function readTexturePatterns(
   reader: BinaryReader,
   thing: ThingType,
   features: ClientFeatures,
   getDefaultDuration: DefaultDurationFn,
-  hasPatternZ: boolean
+  hasPatternZ: boolean,
+  runtimeContext: RuntimeReadContext
 ): void {
   const extended = features.extended
   const improvedAnimations = features.improvedAnimations
   const useFrameGroups = features.frameGroups
+  const runtimeTexture = runtimeContext.metadata
+    ? (runtimeContext.metadata.textures[runtimeContext.textureIndex++] ?? null)
+    : null
 
   let groupCount = 1
   if (useFrameGroups && thing.category === TC.OUTFIT) {
@@ -193,6 +233,8 @@ function readTexturePatterns(
     }
 
     const frameGroup: FrameGroup = createFrameGroup()
+    const storedFrameGroup: FrameGroup = createFrameGroup()
+    const groupRuntimeTexture = groupType === 0 ? runtimeTexture : null
     frameGroup.width = reader.readUint8()
     frameGroup.height = reader.readUint8()
 
@@ -201,46 +243,288 @@ function readTexturePatterns(
     } else {
       frameGroup.exactSize = SPRITE_DEFAULT_SIZE
     }
+    storedFrameGroup.width = frameGroup.width
+    storedFrameGroup.height = frameGroup.height
+    storedFrameGroup.exactSize = frameGroup.exactSize
 
-    frameGroup.layers = reader.readUint8()
-    frameGroup.patternX = reader.readUint8()
-    frameGroup.patternY = reader.readUint8()
-    frameGroup.patternZ = hasPatternZ ? reader.readUint8() : 1
-    frameGroup.frames = reader.readUint8()
+    const rawLayers = reader.readUint8()
+    const rawPatternX = reader.readUint8()
+    const rawPatternY = reader.readUint8()
+    if (runtimeContext.metadata) {
+      applyPxgAxisMapping(frameGroup, thing.category, rawLayers, rawPatternX, rawPatternY)
+    } else {
+      frameGroup.layers = rawLayers
+      frameGroup.patternX = rawPatternX
+      frameGroup.patternY = rawPatternY
+    }
+    storedFrameGroup.layers = frameGroup.layers
+    storedFrameGroup.patternX = frameGroup.patternX
+    storedFrameGroup.patternY = frameGroup.patternY
+
+    const encodedPatternZ = hasPatternZ ? reader.readUint8() : 1
+    const resolvedPatternZ =
+      groupRuntimeTexture && encodedPatternZ === 64 && groupRuntimeTexture.patternZ > 64
+        ? groupRuntimeTexture.patternZ
+        : encodedPatternZ
+    const encodedFrames = reader.readUint8()
+    const promotePatternZToFrames = shouldUsePatternZAsAnimationFrames(
+      groupRuntimeTexture,
+      resolvedPatternZ,
+      encodedFrames
+    )
+
+    frameGroup.patternZ = promotePatternZToFrames ? 1 : resolvedPatternZ
+    frameGroup.frames = promotePatternZToFrames ? resolvedPatternZ : encodedFrames
+    storedFrameGroup.patternZ = frameGroup.patternZ
+    storedFrameGroup.frames = frameGroup.frames
+
+    applyPxgRuntimeTexture(frameGroup, groupRuntimeTexture, thing.category)
 
     if (frameGroup.frames > 1) {
       frameGroup.isAnimation = true
       frameGroup.frameDurations = new Array<FrameDuration>(frameGroup.frames)
 
-      if (improvedAnimations) {
+      if (improvedAnimations && encodedFrames > 1) {
         frameGroup.animationMode = reader.readUint8() as AnimationMode
         frameGroup.loopCount = reader.readInt32()
         frameGroup.startFrame = reader.readInt8()
 
-        for (let i = 0; i < frameGroup.frames; i++) {
+        for (let i = 0; i < encodedFrames; i++) {
           const minimum = reader.readUint32()
           const maximum = reader.readUint32()
-          frameGroup.frameDurations[i] = createFrameDuration(minimum, maximum)
+          if (i < frameGroup.frames) {
+            frameGroup.frameDurations[i] = createFrameDuration(minimum, maximum)
+          }
         }
+        fillDefaultFrameDurations(frameGroup, getDefaultDuration, thing.category, encodedFrames)
       } else {
-        const duration = getDefaultDuration(thing.category)
-        for (let i = 0; i < frameGroup.frames; i++) {
-          frameGroup.frameDurations[i] = createFrameDuration(duration, duration)
-        }
+        fillDefaultFrameDurations(frameGroup, getDefaultDuration, thing.category, 0)
       }
     }
 
     const totalSprites = getFrameGroupTotalSprites(frameGroup)
-    if (totalSprites > SPRITE_DEFAULT_DATA_SIZE) {
-      throw new Error(`A thing type has more than ${SPRITE_DEFAULT_DATA_SIZE} sprites.`)
+    const storedTotalSprites = getFrameGroupTotalSprites(storedFrameGroup)
+    if (totalSprites > MAX_THING_SPRITES) {
+      throw new Error(`A thing type has more than ${MAX_THING_SPRITES} sprites.`)
+    }
+    if (storedTotalSprites > MAX_THING_SPRITES) {
+      throw new Error(`A thing type has more than ${MAX_THING_SPRITES} sprites.`)
     }
 
-    frameGroup.spriteIndex = new Array<number>(totalSprites)
-    for (let i = 0; i < totalSprites; i++) {
-      frameGroup.spriteIndex[i] = extended ? reader.readUint32() : reader.readUint16()
+    const storedSpriteIndex = new Array<number>(storedTotalSprites)
+    for (let i = 0; i < storedTotalSprites; i++) {
+      storedSpriteIndex[i] = extended ? reader.readUint32() : reader.readUint16()
     }
+
+    frameGroup.spriteIndex =
+      storedTotalSprites === totalSprites
+        ? storedSpriteIndex
+        : expandSpriteIndex(storedSpriteIndex, storedFrameGroup, frameGroup)
 
     setThingFrameGroup(thing, groupType as 0 | 1, frameGroup)
+  }
+}
+
+function shouldUsePatternZAsAnimationFrames(
+  texture: PxgRuntimeTexture | null,
+  resolvedPatternZ: number,
+  encodedFrames: number
+): boolean {
+  return texture !== null && encodedFrames === 1 && resolvedPatternZ > 1
+}
+
+function applyPxgAxisMapping(
+  frameGroup: FrameGroup,
+  category: ThingCategory,
+  rawLayers: number,
+  rawPatternX: number,
+  rawPatternY: number
+): void {
+  if (category === TC.OUTFIT) {
+    frameGroup.patternX = rawLayers
+    frameGroup.layers = rawPatternX
+    frameGroup.patternY = rawPatternY
+    return
+  }
+
+  frameGroup.patternY = rawLayers
+  frameGroup.patternX = rawPatternX
+  frameGroup.layers = rawPatternY
+}
+
+function applyPxgRuntimeTexture(
+  frameGroup: FrameGroup,
+  texture: PxgRuntimeTexture | null,
+  category: ThingCategory
+): void {
+  if (!texture) return
+
+  if (texture.width > 0) frameGroup.width = texture.width
+  if (texture.height > 0) frameGroup.height = texture.height
+  if (texture.exactSize > 0) frameGroup.exactSize = texture.exactSize
+
+  let runtimeLayers = texture.layers
+  let runtimePatternX = texture.patternX
+  let runtimePatternY = texture.patternY
+  if (category === TC.OUTFIT) {
+    runtimePatternX = texture.layers
+    runtimeLayers = texture.patternX
+    runtimePatternY = texture.patternY
+  } else {
+    runtimePatternY = texture.layers
+    runtimePatternX = texture.patternX
+    runtimeLayers = texture.patternY
+  }
+
+  if (runtimeLayers > 0) frameGroup.layers = runtimeLayers
+  if (runtimePatternX > 0) frameGroup.patternX = runtimePatternX
+  if (runtimePatternY > 0) frameGroup.patternY = runtimePatternY
+
+  const runtimePatternZ = texture.patternZ > 0 ? texture.patternZ : frameGroup.patternZ
+  if (texture.frames === 0 && frameGroup.patternZ === 1 && frameGroup.frames === runtimePatternZ) {
+    return
+  }
+
+  const runtimeFrames = texture.frames > 0 ? texture.frames : frameGroup.frames
+  if (shouldUsePatternZAsAnimationFrames(texture, runtimePatternZ, runtimeFrames)) {
+    frameGroup.patternZ = 1
+    frameGroup.frames = runtimePatternZ
+  } else {
+    frameGroup.patternZ = runtimePatternZ
+    frameGroup.frames = runtimeFrames
+  }
+}
+
+function fillDefaultFrameDurations(
+  frameGroup: FrameGroup,
+  getDefaultDuration: DefaultDurationFn,
+  category: ThingCategory,
+  startIndex: number
+): void {
+  if (!frameGroup.frameDurations) return
+  const duration = getDefaultDuration(category)
+  for (let i = startIndex; i < frameGroup.frames; i++) {
+    frameGroup.frameDurations[i] = createFrameDuration(duration, duration)
+  }
+}
+
+function expandSpriteIndex(
+  source: number[],
+  sourceGroup: FrameGroup,
+  targetGroup: FrameGroup
+): number[] {
+  const target = new Array<number>(getFrameGroupTotalSprites(targetGroup)).fill(0)
+  const maxWidth = Math.min(sourceGroup.width, targetGroup.width)
+  const maxHeight = Math.min(sourceGroup.height, targetGroup.height)
+  const maxLayers = Math.min(sourceGroup.layers, targetGroup.layers)
+  const maxPatternX = Math.min(sourceGroup.patternX, targetGroup.patternX)
+  const maxPatternY = Math.min(sourceGroup.patternY, targetGroup.patternY)
+  const maxPatternZ = Math.min(sourceGroup.patternZ, targetGroup.patternZ)
+  const maxFrames = Math.min(sourceGroup.frames, targetGroup.frames)
+  const widthOffset = targetGroup.width > sourceGroup.width ? targetGroup.width - sourceGroup.width : 0
+  const heightOffset =
+    targetGroup.height > sourceGroup.height ? targetGroup.height - sourceGroup.height : 0
+
+  for (let frame = 0; frame < maxFrames; frame++) {
+    for (let patternZ = 0; patternZ < maxPatternZ; patternZ++) {
+      for (let patternY = 0; patternY < maxPatternY; patternY++) {
+        for (let patternX = 0; patternX < maxPatternX; patternX++) {
+          for (let layer = 0; layer < maxLayers; layer++) {
+            for (let h = 0; h < maxHeight; h++) {
+              for (let w = 0; w < maxWidth; w++) {
+                const sourceIndex = getFrameGroupSpriteIndex(
+                  sourceGroup,
+                  w,
+                  h,
+                  layer,
+                  patternX,
+                  patternY,
+                  patternZ,
+                  frame
+                )
+                const targetIndex = getFrameGroupSpriteIndex(
+                  targetGroup,
+                  w + widthOffset,
+                  h + heightOffset,
+                  layer,
+                  patternX,
+                  patternY,
+                  patternZ,
+                  frame
+                )
+                if (sourceIndex < source.length && targetIndex < target.length) {
+                  target[targetIndex] = source[sourceIndex]
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+
+  return target
+}
+
+function applyPxgRuntimeFlags(items: ThingType[], flags: PxgRuntimeFlags | null): void {
+  if (!flags) return
+
+  for (const thing of items) {
+    const record = getPxgRuntimeItemFlags(flags, thing.id)
+    if (!record) continue
+
+    if (hasPxgRuntimeFlag(record, PXG_RUNTIME_FLAGS.GROUND)) {
+      thing.isGround = true
+      thing.groundSpeed = record.groundSpeed > 0 ? record.groundSpeed : 100
+    }
+    if (hasPxgRuntimeFlag(record, PXG_RUNTIME_FLAGS.GROUND_BORDER)) thing.isGroundBorder = true
+    if (hasPxgRuntimeFlag(record, PXG_RUNTIME_FLAGS.ON_BOTTOM)) thing.isOnBottom = true
+    if (hasPxgRuntimeFlag(record, PXG_RUNTIME_FLAGS.ON_TOP)) thing.isOnTop = true
+    if (hasPxgRuntimeFlag(record, PXG_RUNTIME_FLAGS.CONTAINER)) thing.isContainer = true
+    if (hasPxgRuntimeFlag(record, PXG_RUNTIME_FLAGS.STACKABLE)) thing.stackable = true
+    if (hasPxgRuntimeFlag(record, PXG_RUNTIME_FLAGS.FORCE_USE)) thing.forceUse = true
+    if (hasPxgRuntimeFlag(record, PXG_RUNTIME_FLAGS.MULTI_USE)) thing.multiUse = true
+    if (hasPxgRuntimeFlag(record, PXG_RUNTIME_FLAGS.WRITABLE)) thing.writable = true
+    if (hasPxgRuntimeFlag(record, PXG_RUNTIME_FLAGS.WRITABLE_ONCE)) thing.writableOnce = true
+    if (hasPxgRuntimeFlag(record, PXG_RUNTIME_FLAGS.FLUID_CONTAINER)) {
+      thing.isFluidContainer = true
+    }
+    if (hasPxgRuntimeFlag(record, PXG_RUNTIME_FLAGS.FLUID)) thing.isFluid = true
+    if (hasPxgRuntimeFlag(record, PXG_RUNTIME_FLAGS.NO_MOVE_ANIMATION)) {
+      thing.noMoveAnimation = true
+    }
+    if (hasPxgRuntimeFlag(record, PXG_RUNTIME_FLAGS.UNPASSABLE)) thing.isUnpassable = true
+    if (hasPxgRuntimeFlag(record, PXG_RUNTIME_FLAGS.UNMOVEABLE)) thing.isUnmoveable = true
+    if (hasPxgRuntimeFlag(record, PXG_RUNTIME_FLAGS.BLOCK_MISSILE)) thing.blockMissile = true
+    if (hasPxgRuntimeFlag(record, PXG_RUNTIME_FLAGS.BLOCK_PATHFIND)) thing.blockPathfind = true
+    if (hasPxgRuntimeFlag(record, PXG_RUNTIME_FLAGS.PICKUPABLE)) thing.pickupable = true
+    if (hasPxgRuntimeFlag(record, PXG_RUNTIME_FLAGS.HANGABLE)) thing.hangable = true
+    if (hasPxgRuntimeFlag(record, PXG_RUNTIME_FLAGS.VERTICAL)) {
+      thing.isVertical = true
+      thing.hangable = true
+    }
+    if (hasPxgRuntimeFlag(record, PXG_RUNTIME_FLAGS.HORIZONTAL)) {
+      thing.isHorizontal = true
+      thing.hangable = true
+    }
+    if (hasPxgRuntimeFlag(record, PXG_RUNTIME_FLAGS.ROTATABLE)) thing.rotatable = true
+    if (hasPxgRuntimeFlag(record, PXG_RUNTIME_FLAGS.DONT_HIDE)) thing.dontHide = true
+    if (hasPxgRuntimeFlag(record, PXG_RUNTIME_FLAGS.TRANSLUCENT)) thing.isTranslucent = true
+    if (hasPxgRuntimeFlag(record, PXG_RUNTIME_FLAGS.LYING_OBJECT)) thing.isLyingObject = true
+    if (hasPxgRuntimeFlag(record, PXG_RUNTIME_FLAGS.ANIMATE_ALWAYS)) thing.animateAlways = true
+    if (hasPxgRuntimeFlag(record, PXG_RUNTIME_FLAGS.FULL_GROUND)) thing.isFullGround = true
+    if (hasPxgRuntimeFlag(record, PXG_RUNTIME_FLAGS.IGNORE_LOOK)) thing.ignoreLook = true
+    if (hasPxgRuntimeFlag(record, PXG_RUNTIME_FLAGS.WRAPPABLE)) thing.wrappable = true
+    if (hasPxgRuntimeFlag(record, PXG_RUNTIME_FLAGS.UNWRAPPABLE)) thing.unwrappable = true
+    if (hasPxgRuntimeFlag(record, PXG_RUNTIME_FLAGS.TOP_EFFECT)) thing.topEffect = true
+    if (hasPxgRuntimeFlag(record, PXG_RUNTIME_FLAGS.USABLE)) thing.usable = true
+    if (
+      hasPxgRuntimeFlag(record, PXG_RUNTIME_FLAGS.MINI_MAP) &&
+      record.miniMapColor > 0
+    ) {
+      thing.miniMap = true
+      thing.miniMapColor = record.miniMapColor
+    }
   }
 }
 

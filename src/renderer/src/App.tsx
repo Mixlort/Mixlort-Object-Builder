@@ -92,6 +92,11 @@ import {
 import { SPRITE_DIMENSIONS } from './data/sprite-dimensions'
 import { createObjectBuilderSettings, type ObjectBuilderSettings } from '../../shared/settings'
 import { readDat, readDatWithFallback, writeDat } from './services/dat'
+import {
+  parsePxgRuntimeFlags,
+  parsePxgRuntimeMetadata,
+  type PxgDatRuntime
+} from './services/pxg-runtime'
 import { createOtfiData, parseOtfi, writeOtfi } from './services/otfi'
 import { clearThumbnailCache } from './hooks/use-sprite-thumbnail'
 import { useKeyboardShortcuts } from './hooks/use-keyboard-shortcuts'
@@ -103,6 +108,7 @@ import {
   exportThingPlanToFiles,
   type ThingExportEntry
 } from './services/thing-export'
+import { collectThingSpriteIds, collectThingsSpriteIds } from './services/sprite-preload'
 import { buildRecoveryOpenResult } from './utils'
 import { materializeImportedThingData } from './services/thing-import/thing-import-service'
 import {
@@ -166,6 +172,7 @@ interface CompileRunParams {
 }
 
 const MAGENTA_BG_ARGB = 0xffff00ff
+const SPRITE_PRELOAD_BATCH_SIZE = 5000
 
 function getMaxThingId(things: ThingType[], fallback: number): number {
   let maxId = fallback
@@ -275,6 +282,22 @@ function validateThingForCompile(
   readDat(buffer, version, features, (category) => defaultDurations[category] ?? 0)
 
   return sanitizedThing
+}
+
+async function preloadFileBackedSpriteIds(
+  ids: number[],
+  setLoadingLabel: (label: string) => void,
+  label: string
+): Promise<void> {
+  if (ids.length === 0 || useSpriteStore.getState().fileBackedSource === null) return
+
+  const total = ids.length
+  for (let start = 0; start < total; start += SPRITE_PRELOAD_BATCH_SIZE) {
+    const batch = ids.slice(start, start + SPRITE_PRELOAD_BATCH_SIZE)
+    const loaded = Math.min(start + batch.length, total)
+    setLoadingLabel(`${label} ${loaded}/${total}`)
+    await useSpriteStore.getState().ensureSpritesCached(batch)
+  }
 }
 
 function featurePayload(features: ClientFeatures): ClientFeatures {
@@ -462,15 +485,37 @@ export function App(): React.JSX.Element {
 
   // Ref for pending thing switch (used by auto-save confirmation dialog)
   const pendingThingSwitchRef = useRef<{ thingId: number; category: ThingCategory } | null>(null)
+  const thingLoadTokenRef = useRef(0)
 
   // Helper to actually load a thing into the editor
   const loadThingIntoEditor = useCallback(
-    (thingId: number, cat: ThingCategory) => {
+    async (thingId: number, cat: ThingCategory): Promise<void> => {
       const ci = clientInfo ?? useAppStore.getState().clientInfo
       if (!ci) return
 
       const thing = getThingById(cat, thingId)
       if (!thing) return
+      const loadToken = ++thingLoadTokenRef.current
+
+      if (useSpriteStore.getState().fileBackedSource !== null) {
+        setIsLoading(true)
+        useAppStore.getState().setLocked(true)
+        try {
+          await preloadFileBackedSpriteIds(
+            collectThingSpriteIds(thing),
+            setLoadingLabel,
+            'Loading object sprites...'
+          )
+        } finally {
+          if (thingLoadTokenRef.current === loadToken) {
+            useAppStore.getState().setLocked(false)
+            setIsLoading(false)
+            setLoadingLabel('')
+          }
+        }
+      }
+
+      if (thingLoadTokenRef.current !== loadToken) return
 
       const thingData: ThingData = {
         obdVersion: 0,
@@ -517,7 +562,7 @@ export function App(): React.JSX.Element {
         if (autosaveSettingRef.current) {
           // Auto-save: persist changes silently and switch
           saveCurrentThingChanges()
-          loadThingIntoEditor(thingId, cat)
+          void loadThingIntoEditor(thingId, cat)
         } else {
           // Show confirmation dialog
           pendingThingSwitchRef.current = { thingId, category: cat }
@@ -526,7 +571,7 @@ export function App(): React.JSX.Element {
         return
       }
 
-      loadThingIntoEditor(thingId, cat)
+      void loadThingIntoEditor(thingId, cat)
     },
     [currentCategory, saveCurrentThingChanges, loadThingIntoEditor]
   )
@@ -743,6 +788,23 @@ export function App(): React.JSX.Element {
             )
           : result.spriteDimension
 
+        let pxgRuntime: PxgDatRuntime | null = null
+        if (loadResult.pxgRuntimeMetadataBuffer) {
+          const metadata = parsePxgRuntimeMetadata(loadResult.pxgRuntimeMetadataBuffer)
+          const flags = loadResult.pxgRuntimeFlagsBuffer
+            ? parsePxgRuntimeFlags(loadResult.pxgRuntimeFlagsBuffer)
+            : null
+          pxgRuntime = { metadata, flags }
+
+          addLog(
+            'info',
+            `PXG runtime: ${metadata.maxItemId} items, ${metadata.maxOutfitId} outfits, ${metadata.maxEffectId} effects, ${metadata.maxMissileId} missiles`
+          )
+          if (flags) {
+            addLog('info', `PXG flags: ${flags.records.length} item record(s)`)
+          }
+        }
+
         // Parse DAT (offloaded to Web Worker) with a compatibility fallback for
         // custom 10.x clients that keep modern flags but do not encode frame groups.
         const datRead = await readDatWithFallback({
@@ -750,8 +812,9 @@ export function App(): React.JSX.Element {
           version: result.version.value,
           features: configuredFeatures,
           defaultDurations,
-          readDat: (buffer, version, readFeatures, durations) =>
-            workerService.readDat(buffer, version, readFeatures, durations)
+          runtime: pxgRuntime,
+          readDat: (buffer, version, readFeatures, durations, runtime) =>
+            workerService.readDat(buffer, version, readFeatures, durations, runtime)
         })
         const datResult = datRead.result
         const effectiveFeatures = datRead.features
@@ -769,9 +832,35 @@ export function App(): React.JSX.Element {
 
         // Load sprites lazily via SpriteAccessor (no upfront extraction)
         setLoadingLabel('Indexing sprites...')
-        useSpriteStore.getState().loadFromBuffer(loadResult.sprBuffer, effectiveFeatures.extended)
-        const sprAccessor = useSpriteStore.getState().spriteAccessor!
-        addLog('info', `SPR: ${sprAccessor.spriteCount} sprites (lazy loading)`)
+        if (loadResult.spriteSource.kind === 'file-backed-pxg') {
+          useSpriteStore.getState().loadFileBacked(loadResult.spriteSource)
+          addLog(
+            'info',
+            `PXG SPR: ${loadResult.spriteSource.baseSpriteCount} base + ${loadResult.spriteSource.extraSpriteCount} extra sprite(s) (file-backed)`
+          )
+
+          const effectSpriteIds = collectThingsSpriteIds(datResult.effects)
+          if (effectSpriteIds.length > 0) {
+            setLoadingLabel('Preloading effect sprites...')
+            await preloadFileBackedSpriteIds(
+              effectSpriteIds,
+              setLoadingLabel,
+              'Preloading effect sprites...'
+            )
+            addLog(
+              'info',
+              `PXG preload: ${effectSpriteIds.length} effect sprite reference(s) cached for color filtering`
+            )
+          }
+        } else {
+          if (!loadResult.sprBuffer) {
+            throw new Error('SPR buffer missing for non-PXG project')
+          }
+          useSpriteStore
+            .getState()
+            .loadFromBuffer(loadResult.sprBuffer, effectiveFeatures.extended)
+          addLog('info', `SPR: ${loadResult.spriteSource.spriteCount} sprites (lazy loading)`)
+        }
 
         // Parse OTB + XML through server-items service (optional)
         let otbInfo: { majorVersion: number; minorVersion: number; count: number } | null = null
@@ -820,7 +909,7 @@ export function App(): React.JSX.Element {
           clientVersion: result.version.value,
           clientVersionStr: result.version.valueStr,
           datSignature: datResult.signature,
-          sprSignature: sprAccessor.signature,
+          sprSignature: loadResult.spriteSource.signature,
           minItemId: 100,
           maxItemId: datResult.maxItemId,
           minOutfitId: 1,
@@ -830,7 +919,7 @@ export function App(): React.JSX.Element {
           minMissileId: 1,
           maxMissileId: datResult.maxMissileId,
           minSpriteId: 1,
-          maxSpriteId: sprAccessor.spriteCount,
+          maxSpriteId: loadResult.spriteSource.spriteCount,
           features: effectiveFeatures,
           loaded: true,
           isTemporary: false,
@@ -840,7 +929,10 @@ export function App(): React.JSX.Element {
           otbItemsCount: otbInfo?.count ?? 0,
           spriteSize: resolvedSpriteDimension.size,
           spriteDataSize: resolvedSpriteDimension.dataSize,
-          loadedFileName: fileName
+          loadedFileName: fileName,
+          pxgCompatibility: loadResult.spriteSource.kind === 'file-backed-pxg',
+          readOnly: loadResult.spriteSource.kind === 'file-backed-pxg',
+          pxgRuntimeMetadataPath: loadResult.pxgRuntimeMetadataPath
         }
 
         const loadedItems = otbInfo ? applyServerItemNames(datResult.items) : datResult.items
@@ -860,7 +952,7 @@ export function App(): React.JSX.Element {
         appState.setThings(ThingCategory.OUTFIT, datResult.outfits)
         appState.setThings(ThingCategory.EFFECT, datResult.effects)
         appState.setThings(ThingCategory.MISSILE, datResult.missiles)
-        appState.setSpriteCount(sprAccessor.spriteCount)
+        appState.setSpriteCount(loadResult.spriteSource.spriteCount)
 
         // Update native menu
         await window.api.menu.updateState({
@@ -901,6 +993,15 @@ export function App(): React.JSX.Element {
 
       if (!state.project.loaded || !currentClientInfo) {
         addLog('warning', 'No project loaded')
+        return false
+      }
+
+      if (currentClientInfo.readOnly || currentClientInfo.pxgCompatibility) {
+        const message =
+          'PXG compatibility projects are read-only. Export is supported, but Compile and Compile As are disabled.'
+        addLog('warning', message)
+        setErrorMessages([message])
+        setActiveDialog('error')
         return false
       }
 
@@ -1256,6 +1357,8 @@ export function App(): React.JSX.Element {
 
         const transparent = exportClientInfo.features.transparency
         const encodeThing = async (entry: ThingExportEntry): Promise<ArrayBuffer> => {
+          await useSpriteStore.getState().ensureSpritesCached(collectThingSpriteIds(entry.thing))
+
           if (result.format === OTFormat.OBD) {
             if (!result.version) {
               throw new Error('OBD export requires a target version')
@@ -1483,7 +1586,7 @@ export function App(): React.JSX.Element {
 
           const editorThing = useEditorStore.getState().editingThingData?.thing
           if (editorThing && replacedTargetIds.includes(editorThing.id)) {
-            loadThingIntoEditor(editorThing.id, currentCategory)
+            await loadThingIntoEditor(editorThing.id, currentCategory)
           }
 
           addLog('info', `Import complete: replaced ${importedCount} ${currentCategory}(s)`)
@@ -1579,7 +1682,7 @@ export function App(): React.JSX.Element {
     pendingThingSwitchRef.current = null
     setActiveDialog(null)
     if (pending) {
-      loadThingIntoEditor(pending.thingId, pending.category)
+      void loadThingIntoEditor(pending.thingId, pending.category)
     }
   }, [saveCurrentThingChanges, loadThingIntoEditor])
 
@@ -1590,7 +1693,7 @@ export function App(): React.JSX.Element {
     pendingThingSwitchRef.current = null
     setActiveDialog(null)
     if (pending) {
-      loadThingIntoEditor(pending.thingId, pending.category)
+      void loadThingIntoEditor(pending.thingId, pending.category)
     }
   }, [loadThingIntoEditor])
 
@@ -1614,8 +1717,12 @@ export function App(): React.JSX.Element {
         addLog('info', `Recovering previous session: ${info.datFilePath}`)
 
         const [datBuffer, sprBuffer] = await Promise.all([
-          window.api.file.readBinary(info.datFilePath),
-          window.api.file.readBinary(info.sprFilePath)
+          window.api.file.readBinaryRange
+            ? window.api.file.readBinaryRange(info.datFilePath, 0, 16)
+            : window.api.file.readBinary(info.datFilePath),
+          window.api.file.readBinaryRange
+            ? window.api.file.readBinaryRange(info.sprFilePath, 0, 8)
+            : window.api.file.readBinary(info.sprFilePath)
         ])
 
         let recoveryFeatures = info.features
@@ -1693,6 +1800,14 @@ export function App(): React.JSX.Element {
           void handleCompileCurrent()
           break
         case MENU_FILE_COMPILE_AS:
+          if (clientInfo?.readOnly || clientInfo?.pxgCompatibility) {
+            const message =
+              'PXG compatibility projects are read-only. Export is supported, but Compile and Compile As are disabled.'
+            addLog('warning', message)
+            setErrorMessages([message])
+            setActiveDialog('error')
+            break
+          }
           setActiveDialog('compileAs')
           break
         case MENU_FILE_MERGE:
@@ -1752,7 +1867,7 @@ export function App(): React.JSX.Element {
           break
       }
     },
-    [addLog, togglePanel, handleCompileCurrent]
+    [addLog, togglePanel, handleCompileCurrent, clientInfo]
   )
 
   // Listen for menu actions from the main process (native menu clicks)

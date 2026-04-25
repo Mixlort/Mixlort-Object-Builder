@@ -166,17 +166,30 @@ export function OpenAssetsDialog({
           return
         }
 
-        // Read file headers to get signatures and counts
-        const datBuffer = await window.api.file.readBinary(discovery.datFile)
-        const sprBuffer = await window.api.file.readBinary(discovery.sprFile)
+        // Read only file headers. PXG clients can have multi-GB SPR files.
+        const datBuffer = await window.api.file.readBinaryRange(discovery.datFile, 0, 16)
+        const sprBuffer = await window.api.file.readBinaryRange(discovery.sprFile, 0, 8)
 
         // Parse DAT header: signature (u32) + 4x maxId (u16)
         const datView = new DataView(datBuffer)
         const datSignature = datView.getUint32(0, true)
-        const maxItemId = datView.getUint16(4, true)
-        const maxOutfitId = datView.getUint16(6, true)
-        const maxEffectId = datView.getUint16(8, true)
-        const maxMissileId = datView.getUint16(10, true)
+        let maxItemId = datView.getUint16(4, true)
+        let maxOutfitId = datView.getUint16(6, true)
+        let maxEffectId = datView.getUint16(8, true)
+        let maxMissileId = datView.getUint16(10, true)
+
+        if (discovery.pxgRuntimeMetadataFile) {
+          const runtimeHeader = await window.api.file.readBinaryRange(
+            discovery.pxgRuntimeMetadataFile,
+            0,
+            16
+          )
+          const runtimeView = new DataView(runtimeHeader)
+          maxItemId = runtimeView.getUint32(0, true)
+          maxOutfitId = runtimeView.getUint32(4, true)
+          maxEffectId = runtimeView.getUint32(8, true)
+          maxMissileId = runtimeView.getUint32(12, true)
+        }
 
         // Parse SPR header: signature (u32) + count (u16 or u32)
         const sprView = new DataView(sprBuffer)
@@ -185,7 +198,19 @@ export function OpenAssetsDialog({
         // Detect version by signatures
         const version = findVersionBySignatures(datSignature, sprSignature) ?? null
         const isExtended = version ? version.value >= 960 : false
-        const spritesCount = isExtended ? sprView.getUint32(4, true) : sprView.getUint16(4, true)
+        let spritesCount = isExtended ? sprView.getUint32(4, true) : sprView.getUint16(4, true)
+
+        if (discovery.sprxFile) {
+          const sprxHeader = await window.api.file.readBinaryRange(discovery.sprxFile, 0, 16)
+          const sprxView = new DataView(sprxHeader)
+          const magic = sprxView.getUint32(0, true)
+          const version = sprxView.getUint32(4, true)
+          const baseCount = sprxView.getUint32(8, true)
+          const extraCount = sprxView.getUint32(12, true)
+          if (magic === 0x58475850 && version === 1 && baseCount === spritesCount) {
+            spritesCount += extraCount
+          }
+        }
 
         const info: ClientFilesInfo = {
           datFile: discovery.datFile,

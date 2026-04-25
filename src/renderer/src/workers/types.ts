@@ -8,6 +8,7 @@
 
 import type { ClientFeatures } from '../types'
 import type { DatReadResult } from '../services/dat/dat-reader'
+import type { PxgDatRuntime } from '../services/pxg-runtime'
 import type { SprWriteData } from '../services/spr/spr-writer'
 import type { ThingData } from '../types'
 
@@ -39,6 +40,7 @@ export interface ReadDatPayload {
   features: ClientFeatures
   /** Pre-computed default durations per category (can't pass functions via postMessage) */
   defaultDurations: Record<string, number>
+  runtime?: PxgDatRuntime | null
 }
 
 export interface WriteDatPayload {

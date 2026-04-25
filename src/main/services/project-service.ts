@@ -12,7 +12,7 @@
  * - unloadFilesCallback -> unloadProject
  */
 
-import { basename, dirname, join } from 'path'
+import { basename, dirname, join, extname } from 'path'
 import {
   readBinaryFile,
   writeBinaryFile,
@@ -31,9 +31,12 @@ import type {
   LoadProjectResult,
   CompileProjectParams,
   MergeProjectParams,
-  MergeProjectResult
+  MergeProjectResult,
+  ReadProjectSpritesResult,
+  SpriteSourceDescriptor
 } from '../../shared/project-state'
 import { createProjectState, applyProjectVersionDefaults } from '../../shared/project-state'
+import { inspectSpriteSource, readSpritesFromSource } from './sprite-source-service'
 import {
   saveRecoveryData,
   clearRecoveryData,
@@ -49,6 +52,40 @@ import {
 // ---------------------------------------------------------------------------
 
 let state: ProjectState = createProjectState()
+
+function getFileBasePath(filePath: string): string {
+  const ext = extname(filePath)
+  return ext ? filePath.slice(0, -ext.length) : filePath
+}
+
+async function findRuntimeFile(datFilePath: string, fileName: string): Promise<string | null> {
+  const datDir = dirname(datFilePath)
+  const localPath = join(datDir, fileName)
+  if (await fileExists(localPath)) return localPath
+
+  const parentPath = join(dirname(datDir), fileName)
+  if (await fileExists(parentPath)) return parentPath
+
+  return null
+}
+
+function readSpriteHeader(buffer: ArrayBuffer, extended: boolean): SpriteSourceDescriptor {
+  const view = new DataView(buffer)
+  const signature = buffer.byteLength >= 4 ? view.getUint32(0, true) : 0
+  const spriteCount =
+    extended && buffer.byteLength >= 8
+      ? view.getUint32(4, true)
+      : buffer.byteLength >= 6
+        ? view.getUint16(4, true)
+        : 0
+
+  return {
+    kind: 'buffer',
+    signature,
+    spriteCount,
+    extended
+  }
+}
 
 /**
  * Returns the current project state (read-only snapshot).
@@ -93,7 +130,11 @@ export function createProject(params: CreateProjectParams): ProjectState {
     features,
     isTemporary: true,
     changed: false,
-    loadedFileName: ''
+    loadedFileName: '',
+    spriteSource: null,
+    pxgCompatibility: false,
+    readOnly: false,
+    pxgRuntimeMetadataPath: null
   }
 
   return getProjectState()
@@ -123,10 +164,6 @@ export async function loadProject(params: LoadProjectParams): Promise<LoadProjec
     throw new Error(`SPR file not found: ${params.sprFilePath}`)
   }
 
-  // Read main client files
-  const datBuffer = await readBinaryFile(params.datFilePath)
-  const sprBuffer = await readBinaryFile(params.sprFilePath)
-
   // Try to find and read .otfi file alongside DAT
   let otfiContent: string | null = null
   const datDir = dirname(params.datFilePath)
@@ -134,6 +171,37 @@ export async function loadProject(params: LoadProjectParams): Promise<LoadProjec
   const otfiPath = join(datDir, `${datBaseName}.otfi`)
   if (await fileExists(otfiPath)) {
     otfiContent = await readTextFile(otfiPath)
+  }
+
+  // Apply features with version defaults before reading the SPR header.
+  const features = { ...params.features }
+  applyProjectVersionDefaults(features, params.versionValue)
+  const extended = features.extended || params.versionValue >= 960
+
+  // Read DAT eagerly, but keep PXG SPR files file-backed to avoid multi-GB buffers.
+  const datBuffer = await readBinaryFile(params.datFilePath)
+  const sprxPath = `${getFileBasePath(params.sprFilePath)}.sprx`
+  const pxgRuntimeMetadataPath = await findRuntimeFile(params.datFilePath, 'pxg.runtime.meta.bin')
+  const pxgRuntimeFlagsPath = await findRuntimeFile(params.datFilePath, 'pxg.runtime.flags.bin')
+  const pxgCompatibility = Boolean(pxgRuntimeMetadataPath && (await fileExists(sprxPath)))
+  let sprBuffer: ArrayBuffer | null = null
+  let spriteSource: SpriteSourceDescriptor
+  let pxgRuntimeMetadataBuffer: ArrayBuffer | null = null
+  let pxgRuntimeFlagsBuffer: ArrayBuffer | null = null
+
+  if (pxgCompatibility) {
+    spriteSource = await inspectSpriteSource({
+      sprFilePath: params.sprFilePath,
+      sprxFilePath: sprxPath,
+      extended
+    })
+    pxgRuntimeMetadataBuffer = pxgRuntimeMetadataPath
+      ? await readBinaryFile(pxgRuntimeMetadataPath)
+      : null
+    pxgRuntimeFlagsBuffer = pxgRuntimeFlagsPath ? await readBinaryFile(pxgRuntimeFlagsPath) : null
+  } else {
+    sprBuffer = await readBinaryFile(params.sprFilePath)
+    spriteSource = readSpriteHeader(sprBuffer, extended)
   }
 
   // Read server items if path provided
@@ -154,10 +222,6 @@ export async function loadProject(params: LoadProjectParams): Promise<LoadProjec
     }
   }
 
-  // Apply features with version defaults
-  const features = { ...params.features }
-  applyProjectVersionDefaults(features, params.versionValue)
-
   // Update project state
   state = {
     loaded: true,
@@ -170,7 +234,11 @@ export async function loadProject(params: LoadProjectParams): Promise<LoadProjec
     features,
     isTemporary: false,
     changed: false,
-    loadedFileName: basename(params.datFilePath)
+    loadedFileName: basename(params.datFilePath),
+    spriteSource,
+    pxgCompatibility,
+    readOnly: pxgCompatibility,
+    pxgRuntimeMetadataPath
   }
 
   // Watch DAT and SPR files for external changes
@@ -180,6 +248,11 @@ export async function loadProject(params: LoadProjectParams): Promise<LoadProjec
   watchFile(params.sprFilePath, () => {
     // File changed externally
   })
+  if (pxgCompatibility) {
+    watchFile(sprxPath, () => {})
+    if (pxgRuntimeMetadataPath) watchFile(pxgRuntimeMetadataPath, () => {})
+    if (pxgRuntimeFlagsPath) watchFile(pxgRuntimeFlagsPath, () => {})
+  }
 
   // Save recovery metadata (detected on next startup if app crashes)
   saveRecoveryData({
@@ -191,7 +264,18 @@ export async function loadProject(params: LoadProjectParams): Promise<LoadProjec
     timestamp: Date.now()
   })
 
-  return { datBuffer, sprBuffer, otbBuffer, xmlContent, otfiContent }
+  return {
+    datBuffer,
+    sprBuffer,
+    spriteSource,
+    otbBuffer,
+    xmlContent,
+    otfiContent,
+    pxgRuntimeMetadataBuffer,
+    pxgRuntimeFlagsBuffer,
+    pxgRuntimeMetadataPath,
+    pxgRuntimeFlagsPath
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -208,6 +292,9 @@ export async function loadProject(params: LoadProjectParams): Promise<LoadProjec
 export async function compileProject(params: CompileProjectParams): Promise<void> {
   if (!state.loaded) {
     throw new Error('No project loaded')
+  }
+  if (state.readOnly) {
+    throw new Error('PXG compatibility projects are read-only and cannot be compiled to DAT/SPR.')
   }
 
   const datDir = dirname(params.datFilePath)
@@ -259,6 +346,13 @@ export async function compileProject(params: CompileProjectParams): Promise<void
     state.isTemporary = false
     state.changed = false
     state.loadedFileName = basename(params.datFilePath)
+    state.spriteSource = readSpriteHeader(
+      params.sprBuffer,
+      params.features.extended || params.versionValue >= 960
+    )
+    state.pxgCompatibility = false
+    state.readOnly = false
+    state.pxgRuntimeMetadataPath = null
 
     // Update watchers for new paths
     if (state.datFilePath) {
@@ -392,15 +486,47 @@ export function updateProjectFeatures(features: Partial<ProjectState['features']
  */
 export async function discoverClientFiles(
   directoryPath: string
-): Promise<{ datFile: string | null; sprFile: string | null; otfiFile: string | null }> {
+): Promise<{
+  datFile: string | null
+  sprFile: string | null
+  sprxFile: string | null
+  otfiFile: string | null
+  pxgRuntimeMetadataFile: string | null
+  pxgRuntimeFlagsFile: string | null
+}> {
   const datFiles = await listFiles(directoryPath, ['dat'])
   const sprFiles = await listFiles(directoryPath, ['spr'])
+  const sprxFiles = await listFiles(directoryPath, ['sprx'])
   const otfiFiles = await listFiles(directoryPath, ['otfi'])
+  const datFile = datFiles[0] ?? null
+  const sprFile = sprFiles[0] ?? null
+  const siblingSprxFile = sprFile ? `${getFileBasePath(sprFile)}.sprx` : null
+  const sprxFile =
+    siblingSprxFile && (await fileExists(siblingSprxFile))
+      ? siblingSprxFile
+      : (sprxFiles[0] ?? null)
 
   return {
-    datFile: datFiles[0] ?? null,
-    sprFile: sprFiles[0] ?? null,
-    otfiFile: otfiFiles[0] ?? null
+    datFile,
+    sprFile,
+    sprxFile,
+    otfiFile: otfiFiles[0] ?? null,
+    pxgRuntimeMetadataFile: datFile
+      ? await findRuntimeFile(datFile, 'pxg.runtime.meta.bin')
+      : await findFileInDirectory(directoryPath, 'pxg.runtime.meta.bin'),
+    pxgRuntimeFlagsFile: datFile
+      ? await findRuntimeFile(datFile, 'pxg.runtime.flags.bin')
+      : await findFileInDirectory(directoryPath, 'pxg.runtime.flags.bin')
+  }
+}
+
+export async function readProjectSprites(ids: number[]): Promise<ReadProjectSpritesResult> {
+  if (!state.spriteSource || state.spriteSource.kind !== 'file-backed-pxg') {
+    return { entries: [] }
+  }
+
+  return {
+    entries: await readSpritesFromSource(state.spriteSource, ids)
   }
 }
 

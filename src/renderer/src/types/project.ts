@@ -120,6 +120,10 @@ export interface ClientInfo {
   spriteDataSize: number
 
   loadedFileName: string
+
+  pxgCompatibility: boolean
+  readOnly: boolean
+  pxgRuntimeMetadataPath: string | null
 }
 
 export function createClientInfo(): ClientInfo {
@@ -162,7 +166,11 @@ export function createClientInfo(): ClientInfo {
     spriteSize: 32,
     spriteDataSize: 4096,
 
-    loadedFileName: ''
+    loadedFileName: '',
+
+    pxgCompatibility: false,
+    readOnly: false,
+    pxgRuntimeMetadataPath: null
   }
 }
 

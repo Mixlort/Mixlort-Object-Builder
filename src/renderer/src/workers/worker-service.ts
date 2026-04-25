@@ -34,6 +34,7 @@ import {
   OBD_WORKER_DECODE
 } from './types'
 import { cloneThingType, type ClientFeatures, type ThingData } from '../types'
+import type { PxgDatRuntime } from '../services/pxg-runtime'
 
 // ---------------------------------------------------------------------------
 // Worker instances (lazy singletons)
@@ -92,9 +93,10 @@ export const workerService = {
     buffer: ArrayBuffer,
     version: number,
     features: ClientFeatures,
-    defaultDurations: Record<string, number>
+    defaultDurations: Record<string, number>,
+    runtime?: PxgDatRuntime | null
   ): Promise<DatReadResult> {
-    const payload: ReadDatPayload = { buffer, version, features, defaultDurations }
+    const payload: ReadDatPayload = { buffer, version, features, defaultDurations, runtime }
     return getDatWorker().request<DatReadResult>(DAT_WORKER_READ, payload, [buffer])
   },
 

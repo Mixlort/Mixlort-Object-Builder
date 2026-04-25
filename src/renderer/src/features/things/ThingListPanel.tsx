@@ -55,6 +55,7 @@ import { useTranslation } from 'react-i18next'
 import { PaginationStepper } from '../../components/PaginationStepper'
 import { ThingContextMenu, type ThingContextAction } from './ThingContextMenu'
 import { useSpriteThumbnail } from '../../hooks/use-sprite-thumbnail'
+import { collectThingThumbnailSpriteIds } from '../../services/sprite-preload'
 import type { EffectPreviewFrameMode } from '../../hooks/effect-preview-frame'
 import {
   EFFECT_COLOR_BUCKETS,
@@ -330,6 +331,9 @@ export function ThingListPanel({
   const clientInfo = useAppStore((s) => s.clientInfo)
   const transparentEnabled = clientInfo?.features.transparency ?? false
   const resolvedPageSize = Math.max(1, pageSize)
+  const isFileBackedSpriteSource = useSpriteStore((s) => s.fileBackedSource !== null)
+  const spriteCacheLoading = useSpriteStore((s) => s.spriteCacheLoading)
+  const spriteCachePendingCount = useSpriteStore((s) => s.spriteCachePendingCount)
 
   // -------------------------------------------------------------------------
   // Derived data
@@ -543,6 +547,31 @@ export function ThingListPanel({
   }, [viewMode, pageThings, scrollTop, containerHeight, containerWidth])
 
   const gridMetrics = useMemo(() => getGridMetrics(containerWidth), [containerWidth])
+  const visibleThumbnailSpriteIdsKey = useMemo(() => {
+    if (!isFileBackedSpriteSource || virtualState.items.length === 0) return ''
+    const ids = new Set<number>()
+    for (const item of virtualState.items) {
+      for (const spriteId of collectThingThumbnailSpriteIds(
+        item.thing,
+        currentCategory,
+        effectPreviewFrameMode
+      )) {
+        ids.add(spriteId)
+      }
+    }
+    return Array.from(ids)
+      .sort((a, b) => a - b)
+      .join(',')
+  }, [isFileBackedSpriteSource, virtualState.items, currentCategory, effectPreviewFrameMode])
+
+  useEffect(() => {
+    if (!visibleThumbnailSpriteIdsKey) return
+    const ids = visibleThumbnailSpriteIdsKey
+      .split(',')
+      .map((id) => Number(id))
+      .filter((id) => Number.isInteger(id) && id > 0)
+    void useSpriteStore.getState().ensureSpritesCached(ids)
+  }, [visibleThumbnailSpriteIdsKey])
 
   // -------------------------------------------------------------------------
   // Selection handlers
@@ -1218,10 +1247,19 @@ export function ThingListPanel({
       {/* Virtual scroll list area */}
       <div
         ref={scrollRef}
-        className="flex-1 overflow-x-hidden overflow-y-auto"
+        className="relative flex-1 overflow-x-hidden overflow-y-auto"
         onScroll={handleScroll}
         data-testid="thing-list-scroll"
       >
+        {isFileBackedSpriteSource && spriteCacheLoading && (
+          <div className="pointer-events-none absolute top-2 right-2 z-10 flex w-fit items-center gap-2 rounded border border-border bg-bg-primary/95 px-2 py-1 text-[10px] text-text-secondary shadow">
+            <span className="h-2 w-2 animate-pulse rounded-full bg-accent" />
+            <span>
+              Loading sprites
+              {spriteCachePendingCount > 0 ? ` (${spriteCachePendingCount})` : ''}
+            </span>
+          </div>
+        )}
         {!isLoaded ? (
           <div className="flex h-full items-center justify-center">
             <span className="text-xs text-text-secondary">No project loaded</span>

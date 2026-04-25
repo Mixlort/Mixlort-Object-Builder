@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from 'vitest'
+import { describe, it, expect, beforeEach, vi } from 'vitest'
 import {
   useSpriteStore,
   resetSpriteStore,
@@ -131,6 +131,80 @@ describe('use-sprite-store', () => {
 
       expect(useSpriteStore.getState().selectedSpriteId).toBeNull()
       expect(useSpriteStore.getState().selectedSpriteIds).toEqual([])
+    })
+  })
+
+  describe('file-backed PXG sprites', () => {
+    it('loads a file-backed source and fetches missing sprites on demand', async () => {
+      const readSprites = vi.fn().mockResolvedValue({
+        entries: [[5, makePixels(0xee)]]
+      })
+      Object.defineProperty(window, 'api', {
+        configurable: true,
+        value: {
+          project: { readSprites }
+        }
+      })
+
+      useSpriteStore.getState().loadFileBacked({
+        kind: 'file-backed-pxg',
+        signature: 0x59e48e02,
+        spriteCount: 8,
+        extended: true,
+        sprFilePath: '/tmp/Tibia.spr',
+        sprxFilePath: '/tmp/Tibia.sprx',
+        baseSpriteCount: 4,
+        extraSpriteCount: 4,
+        baseAddressTableOffset: 8,
+        extraAddressTableOffset: 16
+      })
+
+      expect(useSpriteStore.getState().getSprite(5)).toBeUndefined()
+      await useSpriteStore.getState().ensureSpritesCached([5, 5])
+
+      expect(readSprites).toHaveBeenCalledWith([5])
+      expect(useSpriteStore.getState().getSprite(5)).toEqual(makePixels(0xee))
+      expect(useSpriteStore.getState().getSpriteCount()).toBe(8)
+    })
+
+    it('coalesces file-backed sprite requests into a single IPC batch', async () => {
+      const readSprites = vi.fn().mockResolvedValue({
+        entries: [
+          [5, makePixels(0xe5)],
+          [6, makePixels(0xe6)],
+          [7, makePixels(0xe7)]
+        ]
+      })
+      Object.defineProperty(window, 'api', {
+        configurable: true,
+        value: {
+          project: { readSprites }
+        }
+      })
+
+      useSpriteStore.getState().loadFileBacked({
+        kind: 'file-backed-pxg',
+        signature: 0x59e48e02,
+        spriteCount: 8,
+        extended: true,
+        sprFilePath: '/tmp/Tibia.spr',
+        sprxFilePath: '/tmp/Tibia.sprx',
+        baseSpriteCount: 4,
+        extraSpriteCount: 4,
+        baseAddressTableOffset: 8,
+        extraAddressTableOffset: 16
+      })
+
+      await Promise.all([
+        useSpriteStore.getState().ensureSpritesCached([5]),
+        useSpriteStore.getState().ensureSpritesCached([6, 7])
+      ])
+
+      expect(readSprites).toHaveBeenCalledTimes(1)
+      expect(readSprites).toHaveBeenCalledWith([5, 6, 7])
+      expect(useSpriteStore.getState().getSprite(7)).toEqual(makePixels(0xe7))
+      expect(useSpriteStore.getState().spriteCacheLoading).toBe(false)
+      expect(useSpriteStore.getState().spriteCachePendingCount).toBe(0)
     })
   })
 

@@ -14,8 +14,10 @@ export type {
   LoadProjectParams,
   CompileProjectParams,
   MergeProjectParams,
+  SpriteSourceDescriptor,
   LoadProjectResult,
-  MergeProjectResult
+  MergeProjectResult,
+  ReadProjectSpritesResult
 } from './project-state'
 
 // Re-export settings types (already serializable)
@@ -123,7 +125,10 @@ export interface RecentDirectoriesData {
 export interface ClientFilesDiscovery {
   datFile: string | null
   sprFile: string | null
+  sprxFile: string | null
   otfiFile: string | null
+  pxgRuntimeMetadataFile: string | null
+  pxgRuntimeFlagsFile: string | null
 }
 
 export interface ServerItemFilesDiscovery {

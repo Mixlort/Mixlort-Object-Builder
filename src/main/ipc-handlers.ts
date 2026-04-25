@@ -31,6 +31,7 @@ import {
   showSaveDialog,
   showDirectoryDialog,
   readBinaryFile,
+  readBinaryRange,
   writeBinaryFile,
   readTextFile,
   writeTextFile,
@@ -62,7 +63,8 @@ import {
   setServerItemsPath,
   updateProjectFeatures,
   discoverClientFiles,
-  discoverServerItemFiles
+  discoverServerItemFiles,
+  readProjectSprites
 } from './services/project-service'
 import {
   loadSettings,
@@ -129,6 +131,13 @@ export function registerIpcHandlers(): void {
   ipcMain.handle(channels.FILE_READ_BINARY, async (_event, filePath: string) => {
     return readBinaryFile(filePath)
   })
+
+  ipcMain.handle(
+    channels.FILE_READ_BINARY_RANGE,
+    async (_event, filePath: string, position: number, length: number) => {
+      return readBinaryRange(filePath, position, length)
+    }
+  )
 
   ipcMain.handle(
     channels.FILE_WRITE_BINARY,
@@ -304,6 +313,10 @@ export function registerIpcHandlers(): void {
 
   ipcMain.handle(channels.PROJECT_DISCOVER_SERVER_ITEM_FILES, async (_event, dir: string) => {
     return discoverServerItemFiles(dir)
+  })
+
+  ipcMain.handle(channels.PROJECT_READ_SPRITES, async (_event, ids: number[]) => {
+    return readProjectSprites(ids)
   })
 
   // -------------------------------------------------------------------------

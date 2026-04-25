@@ -19,6 +19,30 @@ export interface ProjectFeatures {
   attributeServer: string | null
 }
 
+export interface BufferSpriteSourceDescriptor {
+  kind: 'buffer'
+  signature: number
+  spriteCount: number
+  extended: boolean
+}
+
+export interface FileBackedPxgSpriteSourceDescriptor {
+  kind: 'file-backed-pxg'
+  signature: number
+  spriteCount: number
+  extended: boolean
+  sprFilePath: string
+  sprxFilePath: string
+  baseSpriteCount: number
+  extraSpriteCount: number
+  baseAddressTableOffset: number
+  extraAddressTableOffset: number
+}
+
+export type SpriteSourceDescriptor =
+  | BufferSpriteSourceDescriptor
+  | FileBackedPxgSpriteSourceDescriptor
+
 export function createProjectFeatures(
   extended = false,
   transparency = false,
@@ -79,6 +103,15 @@ export interface ProjectState {
 
   /** Name of the loaded file for display purposes */
   loadedFileName: string
+
+  /** Current sprite source descriptor. File-backed PXG avoids loading huge SPR files in memory. */
+  spriteSource: SpriteSourceDescriptor | null
+  /** True when PXG runtime sidecar files are active. */
+  pxgCompatibility: boolean
+  /** True when the loaded project must not be compiled back to DAT/SPR. */
+  readOnly: boolean
+  /** Runtime metadata file path when PXG compatibility is active. */
+  pxgRuntimeMetadataPath: string | null
 }
 
 export function createProjectState(): ProjectState {
@@ -93,7 +126,11 @@ export function createProjectState(): ProjectState {
     features: createProjectFeatures(),
     isTemporary: false,
     changed: false,
-    loadedFileName: ''
+    loadedFileName: '',
+    spriteSource: null,
+    pxgCompatibility: false,
+    readOnly: false,
+    pxgRuntimeMetadataPath: null
   }
 }
 
@@ -153,14 +190,23 @@ export interface MergeProjectParams {
 /** Result of loading a project's files from disk */
 export interface LoadProjectResult {
   datBuffer: ArrayBuffer
-  sprBuffer: ArrayBuffer
+  sprBuffer: ArrayBuffer | null
+  spriteSource: SpriteSourceDescriptor
   otbBuffer: ArrayBuffer | null
   xmlContent: string | null
   otfiContent: string | null
+  pxgRuntimeMetadataBuffer: ArrayBuffer | null
+  pxgRuntimeFlagsBuffer: ArrayBuffer | null
+  pxgRuntimeMetadataPath: string | null
+  pxgRuntimeFlagsPath: string | null
 }
 
 /** Result of loading merge files from disk */
 export interface MergeProjectResult {
   datBuffer: ArrayBuffer
   sprBuffer: ArrayBuffer
+}
+
+export interface ReadProjectSpritesResult {
+  entries: Array<[number, Uint8Array]>
 }

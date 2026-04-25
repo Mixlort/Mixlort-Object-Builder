@@ -12,7 +12,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useAppStore, selectClientInfo, selectSpriteCount } from '../../stores'
 import { useEditorStore, selectEditingThingData } from '../../stores'
-import { ThingCategory } from '../../types/things'
+import { ThingCategory, type ThingData } from '../../types/things'
 import {
   cloneFrameGroup,
   FrameGroupType as FGT,
@@ -42,6 +42,19 @@ function resolvePreviewFrameDuration(frameGroup: FrameGroup, frameIndex: number)
   }
 
   return DEFAULT_FRAME_DURATION_MS
+}
+
+function getDefaultFrameGroupType(
+  editingThingData: ThingData | null,
+  isOutfit: boolean
+): FrameGroupType {
+  const thing = editingThingData?.thing
+  const hasWalking = isOutfit && !!thing?.frameGroups && thing.frameGroups.length > 1
+  return hasWalking ? FGT.WALKING : FGT.DEFAULT
+}
+
+function getDefaultEffectLoopEnabled(editingThingData: ThingData | null): boolean {
+  return editingThingData?.thing.category === ThingCategory.EFFECT
 }
 
 // ---------------------------------------------------------------------------
@@ -110,13 +123,20 @@ function PreviewSection({
   const { t } = useTranslation()
   const editingThingData = useEditorStore(selectEditingThingData)
   const currentCategory = useAppStore((s) => s.currentCategory)
+  const isOutfit = currentCategory === ThingCategory.OUTFIT
 
-  const [frameGroupType, setFrameGroupType] = useState<FrameGroupType>(FGT.DEFAULT)
+  const [frameGroupType, setFrameGroupType] = useState<FrameGroupType>(() =>
+    getDefaultFrameGroupType(editingThingData, isOutfit)
+  )
   const [zoomed, setZoomed] = useState(true)
-  const [effectLoopEnabled, setEffectLoopEnabled] = useState(true)
+  const [effectLoopEnabled, setEffectLoopEnabled] = useState(() =>
+    getDefaultEffectLoopEnabled(editingThingData)
+  )
   const [currentFrame, setCurrentFrame] = useState(0)
   const [isPlaying, setIsPlaying] = useState(false)
   const [isComplete, setIsComplete] = useState(false)
+  const [prevEditingThingData, setPrevEditingThingData] = useState(editingThingData)
+  const [prevIsOutfit, setPrevIsOutfit] = useState(isOutfit)
 
   const intervalRef = useRef<number | null>(null)
   const currentFrameRef = useRef(0)
@@ -124,26 +144,17 @@ function PreviewSection({
   const playbackDirectionRef = useRef(PLAYBACK_FORWARD)
   const currentLoopRef = useRef(0)
 
-  const isOutfit = currentCategory === ThingCategory.OUTFIT
-
-  // Reset state & auto-play when thing changes
-  useEffect(() => {
-    if (!editingThingData) {
-      setCurrentFrame(0)
-      setIsPlaying(false)
-      setIsComplete(false)
-      return
-    }
-
-    const thing = editingThingData.thing
-
-    // Legacy: default to WALKING if available, otherwise DEFAULT
-    const hasWalking = isOutfit && thing.frameGroups && thing.frameGroups.length > 1
-    const defaultFgt = hasWalking ? FGT.WALKING : FGT.DEFAULT
-    setFrameGroupType(defaultFgt)
+  // Reset preview UI when the selected thing/category changes.
+  if (editingThingData !== prevEditingThingData || isOutfit !== prevIsOutfit) {
+    setPrevEditingThingData(editingThingData)
+    setPrevIsOutfit(isOutfit)
+    setFrameGroupType(getDefaultFrameGroupType(editingThingData, isOutfit))
     setZoomed(true)
-    setEffectLoopEnabled(thing.category === ThingCategory.EFFECT)
-  }, [editingThingData, isOutfit])
+    setEffectLoopEnabled(getDefaultEffectLoopEnabled(editingThingData))
+    setCurrentFrame(0)
+    setIsPlaying(false)
+    setIsComplete(false)
+  }
 
   const thing = editingThingData?.thing ?? null
   const hasWalking = isOutfit && !!thing?.frameGroups && thing.frameGroups.length > 1
@@ -166,25 +177,30 @@ function PreviewSection({
   }, [sourceFrameGroup, isEffect, effectLoopEnabled])
 
   const hasAnimation = previewFrameGroup !== null && previewFrameGroup.frames > 1
+  const [prevPreviewFrameGroup, setPrevPreviewFrameGroup] = useState<FrameGroup | null>(null)
 
-  // Reset local preview playback when source changes
+  // Reset local preview playback when source changes.
+  if (previewFrameGroup !== prevPreviewFrameGroup) {
+    setPrevPreviewFrameGroup(previewFrameGroup)
+    setCurrentFrame(0)
+    setIsComplete(false)
+    setIsPlaying(previewFrameGroup ? previewFrameGroup.frames > 1 : false)
+  }
+
+  // Keep playback refs synchronized with the active source and clear stale timers.
   useEffect(() => {
-    if (intervalRef.current !== null) {
-      window.clearInterval(intervalRef.current)
-      intervalRef.current = null
-    }
     playbackDirectionRef.current = PLAYBACK_FORWARD
     currentLoopRef.current = 0
     currentFrameRef.current = 0
-    setCurrentFrame(0)
-    setIsComplete(false)
+    currentFrameRemainingRef.current = previewFrameGroup
+      ? resolvePreviewFrameDuration(previewFrameGroup, 0)
+      : 0
 
-    if (previewFrameGroup) {
-      currentFrameRemainingRef.current = resolvePreviewFrameDuration(previewFrameGroup, 0)
-      setIsPlaying(previewFrameGroup.frames > 1)
-    } else {
-      currentFrameRemainingRef.current = 0
-      setIsPlaying(false)
+    return () => {
+      if (intervalRef.current !== null) {
+        window.clearInterval(intervalRef.current)
+        intervalRef.current = null
+      }
     }
   }, [previewFrameGroup])
 

@@ -23,7 +23,7 @@ ctx.onmessage = (event: MessageEvent<WorkerRequest>) => {
         const defaultDurationFn = (category: string): number => {
           return p.defaultDurations[category] ?? 0
         }
-        const result = readDat(p.buffer, p.version, p.features, defaultDurationFn)
+        const result = readDat(p.buffer, p.version, p.features, defaultDurationFn, p.runtime)
 
         const response: WorkerResponse = {
           id,
