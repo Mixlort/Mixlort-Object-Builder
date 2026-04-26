@@ -64,6 +64,37 @@ function makeEffect(id: number, spriteId: number, marketName = ''): ThingType {
   return effect
 }
 
+function setMainFrameGroupSize(thing: ThingType, width: number, height: number): ThingType {
+  const fg = createFrameGroup()
+  fg.width = width
+  fg.height = height
+  fg.spriteIndex = new Array(Math.max(1, width * height)).fill(1)
+  thing.frameGroups[0] = fg
+  return thing
+}
+
+function loadFileBackedSpriteSource(readSprites: ReturnType<typeof vi.fn>): void {
+  Object.defineProperty(window, 'api', {
+    configurable: true,
+    value: {
+      project: { readSprites }
+    }
+  })
+
+  useSpriteStore.getState().loadFileBacked({
+    kind: 'file-backed-pxg',
+    signature: 0x59e48e02,
+    spriteCount: 20,
+    extended: true,
+    sprFilePath: '/tmp/Tibia.spr',
+    sprxFilePath: '/tmp/Tibia.sprx',
+    baseSpriteCount: 10,
+    extraSpriteCount: 10,
+    baseAddressTableOffset: 8,
+    extraAddressTableOffset: 16
+  })
+}
+
 function loadProjectWithThings(itemCount = 5, outfitCount = 3): void {
   const items = Array.from({ length: itemCount }, (_, i) => makeThing(100 + i, ThingCategory.ITEM))
   const outfits = Array.from({ length: outfitCount }, (_, i) =>
@@ -390,6 +421,127 @@ describe('ThingListPanel', () => {
       expect(input).toBeDisabled()
     })
 
+    it('filters objects by minimum grid area', () => {
+      const items = [
+        setMainFrameGroupSize(makeThing(100, ThingCategory.ITEM), 1, 1),
+        setMainFrameGroupSize(makeThing(101, ThingCategory.ITEM), 2, 1),
+        setMainFrameGroupSize(makeThing(102, ThingCategory.ITEM), 2, 2),
+        setMainFrameGroupSize(makeThing(103, ThingCategory.ITEM), 3, 3)
+      ]
+      const clientInfo = createClientInfo()
+      clientInfo.minItemId = 100
+      clientInfo.maxItemId = 103
+
+      useAppStore.setState({
+        project: {
+          loaded: true,
+          isTemporary: false,
+          changed: false,
+          fileName: 'test.dat',
+          datFilePath: '/test.dat',
+          sprFilePath: '/test.spr'
+        },
+        clientInfo,
+        things: { items, outfits: [], effects: [], missiles: [] }
+      })
+
+      render(<ThingListPanel />)
+
+      fireEvent.change(screen.getByTestId('grid-area-filter'), { target: { value: '4' } })
+
+      expect(screen.queryByTestId('thing-grid-item-100')).not.toBeInTheDocument()
+      expect(screen.queryByTestId('thing-grid-item-101')).not.toBeInTheDocument()
+      expect(screen.getByTestId('thing-grid-item-102')).toBeInTheDocument()
+      expect(screen.getByTestId('thing-grid-item-103')).toBeInTheDocument()
+    })
+
+    it('combines text search with the minimum grid area filter', () => {
+      vi.useFakeTimers()
+      const items = [
+        setMainFrameGroupSize(makeThing(100, ThingCategory.ITEM, 'Small Golden'), 1, 1),
+        setMainFrameGroupSize(makeThing(101, ThingCategory.ITEM, 'Large Golden'), 2, 2),
+        setMainFrameGroupSize(makeThing(102, ThingCategory.ITEM, 'Large Silver'), 2, 2)
+      ]
+      const clientInfo = createClientInfo()
+      clientInfo.minItemId = 100
+      clientInfo.maxItemId = 102
+
+      useAppStore.setState({
+        project: {
+          loaded: true,
+          isTemporary: false,
+          changed: false,
+          fileName: 'test.dat',
+          datFilePath: '/test.dat',
+          sprFilePath: '/test.spr'
+        },
+        clientInfo,
+        things: { items, outfits: [], effects: [], missiles: [] }
+      })
+
+      render(<ThingListPanel />)
+
+      fireEvent.change(screen.getByTestId('grid-area-filter'), { target: { value: '4' } })
+      fireEvent.change(screen.getByTestId('thing-search-input'), { target: { value: 'golden' } })
+      act(() => {
+        vi.advanceTimersByTime(200)
+      })
+
+      expect(screen.queryByTestId('thing-grid-item-100')).not.toBeInTheDocument()
+      expect(screen.getByTestId('thing-grid-item-101')).toBeInTheDocument()
+      expect(screen.queryByTestId('thing-grid-item-102')).not.toBeInTheDocument()
+      vi.useRealTimers()
+    })
+
+    it('shows a PXG loading overlay while applying a grid area filter', async () => {
+      vi.useFakeTimers()
+      let resolveReadSprites: (value: { entries: Array<[number, Uint8Array]> }) => void = () => {}
+      const readSprites = vi.fn(
+        () =>
+          new Promise<{ entries: Array<[number, Uint8Array]> }>((resolve) => {
+            resolveReadSprites = resolve
+          })
+      )
+      loadFileBackedSpriteSource(readSprites)
+
+      const items = [
+        setMainFrameGroupSize(makeThing(100, ThingCategory.ITEM), 1, 1),
+        setMainFrameGroupSize(makeThing(101, ThingCategory.ITEM), 2, 2)
+      ]
+      const clientInfo = createClientInfo()
+      clientInfo.minItemId = 100
+      clientInfo.maxItemId = 101
+      useAppStore.setState({
+        project: {
+          loaded: true,
+          isTemporary: false,
+          changed: false,
+          fileName: 'test.dat',
+          datFilePath: '/test.dat',
+          sprFilePath: '/test.spr'
+        },
+        clientInfo,
+        things: { items, outfits: [], effects: [], missiles: [] }
+      })
+
+      render(<ThingListPanel />)
+      fireEvent.change(screen.getByTestId('grid-area-filter'), { target: { value: '4' } })
+      await act(async () => {
+        vi.advanceTimersByTime(0)
+      })
+
+      expect(screen.getByTestId('thing-filter-loading-overlay')).toBeInTheDocument()
+
+      await act(async () => {
+        resolveReadSprites({ entries: [[1, compressPixels(makePixels(255, 255, 255), false)]] })
+        await Promise.resolve()
+        vi.runOnlyPendingTimers()
+      })
+
+      expect(screen.queryByTestId('thing-filter-loading-overlay')).not.toBeInTheDocument()
+      vi.useRealTimers()
+    })
+
     it('does not intercept Cmd+V while typing in the search input', () => {
       loadProjectWithThings()
       render(<ThingListPanel />)
@@ -570,6 +722,45 @@ describe('ThingListPanel', () => {
       expect(screen.queryByTestId('thing-grid-item-1')).not.toBeInTheDocument()
       expect(screen.getByTestId('thing-grid-item-2')).toBeInTheDocument()
       expect(screen.queryByTestId('thing-grid-item-3')).not.toBeInTheDocument()
+      vi.useRealTimers()
+    })
+
+    it('waits for file-backed PXG sprites before applying effect color filtering', async () => {
+      vi.useFakeTimers()
+      let resolveReadSprites: (value: { entries: Array<[number, Uint8Array]> }) => void = () => {}
+      const readSprites = vi.fn(
+        () =>
+          new Promise<{ entries: Array<[number, Uint8Array]> }>((resolve) => {
+            resolveReadSprites = resolve
+          })
+      )
+      loadFileBackedSpriteSource(readSprites)
+      loadProjectWithEffects([makeEffect(1, 1, 'Fire Burst'), makeEffect(2, 2, 'Ice Wave')])
+
+      render(<ThingListPanel />)
+      fireEvent.change(screen.getByTestId('effect-color-filter'), { target: { value: 'blue' } })
+      await act(async () => {
+        vi.advanceTimersByTime(0)
+      })
+
+      expect(screen.getByTestId('thing-filter-loading-overlay')).toHaveTextContent(
+        'Filtering objects...'
+      )
+
+      await act(async () => {
+        resolveReadSprites({
+          entries: [
+            [1, compressPixels(makePixels(255, 0, 0), false)],
+            [2, compressPixels(makePixels(0, 64, 255), false)]
+          ]
+        })
+        await Promise.resolve()
+        vi.runOnlyPendingTimers()
+      })
+
+      expect(screen.queryByTestId('thing-grid-item-1')).not.toBeInTheDocument()
+      expect(screen.getByTestId('thing-grid-item-2')).toBeInTheDocument()
+      expect(screen.queryByTestId('thing-filter-loading-overlay')).not.toBeInTheDocument()
       vi.useRealTimers()
     })
   })

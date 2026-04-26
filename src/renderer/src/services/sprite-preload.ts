@@ -22,6 +22,20 @@ export function collectThingsSpriteIds(things: ThingType[]): number[] {
   return Array.from(ids)
 }
 
+export function collectThingsThumbnailSpriteIds(
+  things: ThingType[],
+  category: ThingCategory,
+  effectPreviewFrameMode: EffectPreviewFrameMode = 'first'
+): number[] {
+  const ids = new Set<number>()
+  for (const thing of things) {
+    for (const spriteId of collectThingThumbnailSpriteIds(thing, category, effectPreviewFrameMode)) {
+      ids.add(spriteId)
+    }
+  }
+  return Array.from(ids)
+}
+
 export function collectThingThumbnailSpriteIds(
   thing: ThingType,
   category: ThingCategory,

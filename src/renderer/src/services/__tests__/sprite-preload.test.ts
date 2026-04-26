@@ -8,7 +8,8 @@ import {
 import {
   collectThingSpriteIds,
   collectThingThumbnailSpriteIds,
-  collectThingsSpriteIds
+  collectThingsSpriteIds,
+  collectThingsThumbnailSpriteIds
 } from '../sprite-preload'
 
 function makeThing(category: ThingCategory, spriteIndex: number[]): ThingType {
@@ -52,5 +53,18 @@ describe('sprite-preload', () => {
     frameGroup.frames = 2
 
     expect(collectThingThumbnailSpriteIds(effect, ThingCategory.EFFECT, 'first')).toEqual([11])
+  })
+
+  it('collects unique thumbnail sprite ids for a page of things', () => {
+    const first = makeThing(ThingCategory.ITEM, [1, 2])
+    const second = makeThing(ThingCategory.ITEM, [2, 3])
+    first.frameGroups[0]!.width = 2
+    second.frameGroups[0]!.width = 2
+
+    expect(collectThingsThumbnailSpriteIds([first, second], ThingCategory.ITEM, 'first')).toEqual([
+      1,
+      2,
+      3
+    ])
   })
 })

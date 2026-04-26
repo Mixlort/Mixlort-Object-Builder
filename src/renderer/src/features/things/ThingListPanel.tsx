@@ -54,8 +54,16 @@ import {
 import { useTranslation } from 'react-i18next'
 import { PaginationStepper } from '../../components/PaginationStepper'
 import { ThingContextMenu, type ThingContextAction } from './ThingContextMenu'
-import { useSpriteThumbnail } from '../../hooks/use-sprite-thumbnail'
-import { collectThingThumbnailSpriteIds } from '../../services/sprite-preload'
+import { useSpriteThumbnail, warmThingThumbnailCache } from '../../hooks/use-sprite-thumbnail'
+import {
+  collectThingThumbnailSpriteIds,
+  collectThingsSpriteIds,
+  collectThingsThumbnailSpriteIds
+} from '../../services/sprite-preload'
+import {
+  filterThingsByMinGridArea,
+  GRID_AREA_FILTER_OPTIONS
+} from '../../services/thing-grid-filter'
 import type { EffectPreviewFrameMode } from '../../hooks/effect-preview-frame'
 import {
   EFFECT_COLOR_BUCKETS,
@@ -76,6 +84,8 @@ const GRID_PADDING = 4
 const GRID_FALLBACK_WIDTH = 220
 const GRID_THREE_COLUMN_MIN_CARD_WIDTH = 92
 const OVERSCAN = 5
+const PAGE_PRELOAD_CHUNK_SIZE = 750
+const THUMBNAIL_WARM_CHUNK_SIZE = 75
 
 /** Default page size matching legacy objectsListAmount setting */
 const DEFAULT_PAGE_SIZE = 100
@@ -88,6 +98,35 @@ const CATEGORIES = [
   { key: ThingCategory.EFFECT, labelKey: 'labels.effects' },
   { key: ThingCategory.MISSILE, labelKey: 'labels.missiles' }
 ] as const
+
+function parseSpriteIdsKey(key: string): number[] {
+  if (!key) return []
+  return key
+    .split(',')
+    .map((id) => Number(id))
+    .filter((id) => Number.isInteger(id) && id > 0)
+}
+
+function nextTask(): Promise<void> {
+  return new Promise((resolve) => {
+    window.setTimeout(resolve, 0)
+  })
+}
+
+function warmThumbnails(
+  things: ThingType[],
+  category: ThingCategory,
+  transparent: boolean,
+  effectPreviewFrameMode: EffectPreviewFrameMode
+): void {
+  for (const thing of things) {
+    try {
+      warmThingThumbnailCache(thing, category, transparent, effectPreviewFrameMode)
+    } catch {
+      // Missing or malformed sprite data leaves the regular placeholder visible.
+    }
+  }
+}
 
 // Checkerboard CSS for sprite thumbnail background
 const CHECKERBOARD_STYLE = {
@@ -259,9 +298,16 @@ export function ThingListPanel({
   const [searchFilter, setSearchFilter] = useState('')
   const [effectColorFilter, setEffectColorFilter] = useState<EffectColorFilter>('all')
   const [effectColorSortEnabled, setEffectColorSortEnabled] = useState(false)
+  const [minGridArea, setMinGridArea] = useState(0)
   const [currentPage, setCurrentPage] = useState(0)
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null)
   const [isDragOver, setIsDragOver] = useState(false)
+  const [filterLoadingLabel, setFilterLoadingLabel] = useState('')
+  const [pagePrepareProgress, setPagePrepareProgress] = useState<{
+    done: number
+    total: number
+  } | null>(null)
+  const preloadTokenRef = useRef(0)
 
   // Debounced search filter (150ms delay for filtering, immediate input update)
   const debouncedSetFilter = useMemo(
@@ -298,6 +344,15 @@ export function ThingListPanel({
       debouncedSetFilter(value)
     },
     [debouncedSetFilter, resetScrollPosition]
+  )
+
+  const handleGridAreaFilterChange = useCallback(
+    (e: React.ChangeEvent<HTMLSelectElement>) => {
+      setMinGridArea(Number(e.target.value))
+      setCurrentPage(0)
+      resetScrollPosition()
+    },
+    [resetScrollPosition]
   )
 
   const handlePanelMouseDownCapture = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
@@ -369,13 +424,67 @@ export function ThingListPanel({
     })
   }, [categoryThings, searchFilter])
 
+  const gridFilteredThings = useMemo(
+    () => filterThingsByMinGridArea(textFilteredThings, minGridArea),
+    [textFilteredThings, minGridArea]
+  )
+
+  const effectColorAnalysisKey = useMemo(() => {
+    if (
+      !isFileBackedSpriteSource ||
+      currentCategory !== ThingCategory.EFFECT ||
+      (effectColorFilter === 'all' && !effectColorSortEnabled)
+    ) {
+      return ''
+    }
+
+    return collectThingsSpriteIds(gridFilteredThings)
+      .sort((a, b) => a - b)
+      .join(',')
+  }, [
+    currentCategory,
+    effectColorFilter,
+    effectColorSortEnabled,
+    gridFilteredThings,
+    isFileBackedSpriteSource
+  ])
+  const [readyEffectColorAnalysisKey, setReadyEffectColorAnalysisKey] = useState('')
+
+  useEffect(() => {
+    if (!effectColorAnalysisKey) {
+      setReadyEffectColorAnalysisKey('')
+      return
+    }
+
+    let cancelled = false
+    void useSpriteStore
+      .getState()
+      .ensureSpritesCached(
+        effectColorAnalysisKey
+          .split(',')
+          .map((id) => Number(id))
+          .filter((id) => Number.isInteger(id) && id > 0)
+      )
+      .then(() => {
+        if (!cancelled) setReadyEffectColorAnalysisKey(effectColorAnalysisKey)
+      })
+
+    return () => {
+      cancelled = true
+    }
+  }, [effectColorAnalysisKey])
+
+  const effectColorAnalysisReady =
+    effectColorAnalysisKey === '' || readyEffectColorAnalysisKey === effectColorAnalysisKey
+
   const filteredThings = useMemo((): ThingType[] => {
-    if (currentCategory !== ThingCategory.EFFECT) return textFilteredThings
+    if (currentCategory !== ThingCategory.EFFECT) return gridFilteredThings
+    if (!effectColorAnalysisReady) return gridFilteredThings
 
     const spriteStore = useSpriteStore.getState()
     const getSprite = (spriteId: number) => spriteStore.getSprite(spriteId)
     let result = filterEffectsByColorBucket(
-      textFilteredThings,
+      gridFilteredThings,
       effectColorFilter,
       getSprite,
       transparentEnabled
@@ -388,10 +497,11 @@ export function ThingListPanel({
     return result
   }, [
     currentCategory,
-    textFilteredThings,
+    gridFilteredThings,
     effectColorFilter,
     effectColorSortEnabled,
-    transparentEnabled
+    transparentEnabled,
+    effectColorAnalysisReady
   ])
 
   // -------------------------------------------------------------------------
@@ -547,6 +657,10 @@ export function ThingListPanel({
   }, [viewMode, pageThings, scrollTop, containerHeight, containerWidth])
 
   const gridMetrics = useMemo(() => getGridMetrics(containerWidth), [containerWidth])
+  const visibleThings = useMemo(
+    () => virtualState.items.map((item) => item.thing),
+    [virtualState.items]
+  )
   const visibleThumbnailSpriteIdsKey = useMemo(() => {
     if (!isFileBackedSpriteSource || virtualState.items.length === 0) return ''
     const ids = new Set<number>()
@@ -563,15 +677,140 @@ export function ThingListPanel({
       .sort((a, b) => a - b)
       .join(',')
   }, [isFileBackedSpriteSource, virtualState.items, currentCategory, effectPreviewFrameMode])
+  const pageThumbnailSpriteIdsKey = useMemo(() => {
+    if (!isFileBackedSpriteSource || pageThings.length === 0) return ''
+    return collectThingsThumbnailSpriteIds(pageThings, currentCategory, effectPreviewFrameMode)
+      .sort((a, b) => a - b)
+      .join(',')
+  }, [isFileBackedSpriteSource, pageThings, currentCategory, effectPreviewFrameMode])
+  const visibleThingsRef = useRef(visibleThings)
+  const visibleThumbnailSpriteIdsKeyRef = useRef(visibleThumbnailSpriteIdsKey)
 
   useEffect(() => {
-    if (!visibleThumbnailSpriteIdsKey) return
-    const ids = visibleThumbnailSpriteIdsKey
-      .split(',')
-      .map((id) => Number(id))
-      .filter((id) => Number.isInteger(id) && id > 0)
-    void useSpriteStore.getState().ensureSpritesCached(ids)
-  }, [visibleThumbnailSpriteIdsKey])
+    visibleThingsRef.current = visibleThings
+    visibleThumbnailSpriteIdsKeyRef.current = visibleThumbnailSpriteIdsKey
+  }, [visibleThings, visibleThumbnailSpriteIdsKey])
+
+  const foregroundPreloadKey = useMemo(
+    () =>
+      [
+        currentCategory,
+        searchFilter,
+        minGridArea,
+        effectColorFilter,
+        effectColorSortEnabled ? 1 : 0,
+        safePage,
+        viewMode,
+        containerWidth,
+        containerHeight,
+        effectPreviewFrameMode,
+        effectColorAnalysisReady ? 1 : 0,
+        pageThumbnailSpriteIdsKey
+      ].join('|'),
+    [
+      currentCategory,
+      searchFilter,
+      minGridArea,
+      effectColorFilter,
+      effectColorSortEnabled,
+      safePage,
+      viewMode,
+      containerWidth,
+      containerHeight,
+      effectPreviewFrameMode,
+      effectColorAnalysisReady,
+      pageThumbnailSpriteIdsKey
+    ]
+  )
+
+  useEffect(() => {
+    if (!isFileBackedSpriteSource) {
+      setFilterLoadingLabel('')
+      setPagePrepareProgress(null)
+      return
+    }
+
+    const token = preloadTokenRef.current + 1
+    preloadTokenRef.current = token
+    let cancelled = false
+
+    const isCurrent = () => !cancelled && preloadTokenRef.current === token
+    const run = async (): Promise<void> => {
+      setPagePrepareProgress(null)
+
+      if (!effectColorAnalysisReady) {
+        setFilterLoadingLabel('Filtering objects...')
+        return
+      }
+
+      const visibleSpriteIds = parseSpriteIdsKey(visibleThumbnailSpriteIdsKeyRef.current)
+      setFilterLoadingLabel('Loading page sprites...')
+      await useSpriteStore.getState().ensureSpritesCached(visibleSpriteIds)
+      if (!isCurrent()) return
+
+      setFilterLoadingLabel('Preparing thumbnails...')
+      warmThumbnails(
+        visibleThingsRef.current,
+        currentCategory,
+        transparentEnabled,
+        effectPreviewFrameMode
+      )
+      if (!isCurrent()) return
+
+      setFilterLoadingLabel('')
+
+      const pageSpriteIds = parseSpriteIdsKey(pageThumbnailSpriteIdsKey)
+      if (pageSpriteIds.length === 0) return
+
+      setPagePrepareProgress({ done: 0, total: pageSpriteIds.length })
+      for (let start = 0; start < pageSpriteIds.length; start += PAGE_PRELOAD_CHUNK_SIZE) {
+        if (!isCurrent()) return
+        const chunk = pageSpriteIds.slice(start, start + PAGE_PRELOAD_CHUNK_SIZE)
+        await useSpriteStore.getState().ensureSpritesCached(chunk)
+        if (!isCurrent()) return
+        setPagePrepareProgress({
+          done: Math.min(start + chunk.length, pageSpriteIds.length),
+          total: pageSpriteIds.length
+        })
+        await nextTask()
+      }
+
+      for (let start = 0; start < pageThings.length; start += THUMBNAIL_WARM_CHUNK_SIZE) {
+        if (!isCurrent()) return
+        warmThumbnails(
+          pageThings.slice(start, start + THUMBNAIL_WARM_CHUNK_SIZE),
+          currentCategory,
+          transparentEnabled,
+          effectPreviewFrameMode
+        )
+        await nextTask()
+      }
+
+      if (isCurrent()) {
+        setPagePrepareProgress(null)
+      }
+    }
+
+    void run()
+
+    return () => {
+      cancelled = true
+    }
+  }, [
+    currentCategory,
+    effectColorAnalysisReady,
+    effectPreviewFrameMode,
+    foregroundPreloadKey,
+    isFileBackedSpriteSource,
+    pageThings,
+    pageThumbnailSpriteIdsKey,
+    transparentEnabled
+  ])
+
+  useEffect(() => {
+    if (!isFileBackedSpriteSource || !visibleThumbnailSpriteIdsKey) return
+    void useSpriteStore.getState().ensureSpritesCached(parseSpriteIdsKey(visibleThumbnailSpriteIdsKey))
+  }, [isFileBackedSpriteSource, visibleThumbnailSpriteIdsKey])
 
   // -------------------------------------------------------------------------
   // Selection handlers
@@ -1210,6 +1449,20 @@ export function ThingListPanel({
           disabled={!isLoaded}
           data-testid="thing-search-input"
         />
+        <select
+          className="h-5 w-[78px] rounded border border-border bg-bg-input px-1 text-[10px] text-text-primary outline-none transition-colors focus:border-border-focus"
+          value={minGridArea}
+          onChange={handleGridAreaFilterChange}
+          disabled={!isLoaded}
+          title="Filter by minimum grid area"
+          data-testid="grid-area-filter"
+        >
+          {GRID_AREA_FILTER_OPTIONS.map((option) => (
+            <option key={option.value} value={option.value}>
+              {option.label}
+            </option>
+          ))}
+        </select>
         {currentCategory === ThingCategory.EFFECT && (
           <>
             <select
@@ -1251,12 +1504,37 @@ export function ThingListPanel({
         onScroll={handleScroll}
         data-testid="thing-list-scroll"
       >
-        {isFileBackedSpriteSource && spriteCacheLoading && (
-          <div className="pointer-events-none absolute top-2 right-2 z-10 flex w-fit items-center gap-2 rounded border border-border bg-bg-primary/95 px-2 py-1 text-[10px] text-text-secondary shadow">
+        {filterLoadingLabel && (
+          <div
+            className="absolute inset-0 z-30 flex items-center justify-center bg-black/55"
+            data-testid="thing-filter-loading-overlay"
+          >
+            <div className="flex items-center gap-2 rounded border border-border bg-bg-primary/95 px-3 py-2 text-xs text-text-primary shadow">
+              <span className="h-3 w-3 animate-spin rounded-full border border-text-muted border-t-accent" />
+              <span>{filterLoadingLabel}</span>
+            </div>
+          </div>
+        )}
+        {isFileBackedSpriteSource &&
+          spriteCacheLoading &&
+          !filterLoadingLabel &&
+          !pagePrepareProgress && (
+            <div className="pointer-events-none absolute top-2 right-2 z-10 flex w-fit items-center gap-2 rounded border border-border bg-bg-primary/95 px-2 py-1 text-[10px] text-text-secondary shadow">
+              <span className="h-2 w-2 animate-pulse rounded-full bg-accent" />
+              <span>
+                Loading sprites
+                {spriteCachePendingCount > 0 ? ` (${spriteCachePendingCount})` : ''}
+              </span>
+            </div>
+          )}
+        {isFileBackedSpriteSource && pagePrepareProgress && !filterLoadingLabel && (
+          <div
+            className="pointer-events-none absolute top-2 right-2 z-10 flex w-fit items-center gap-2 rounded border border-border bg-bg-primary/95 px-2 py-1 text-[10px] text-text-secondary shadow"
+            data-testid="thing-page-preload-status"
+          >
             <span className="h-2 w-2 animate-pulse rounded-full bg-accent" />
             <span>
-              Loading sprites
-              {spriteCachePendingCount > 0 ? ` (${spriteCachePendingCount})` : ''}
+              Preparing page... {pagePrepareProgress.done}/{pagePrepareProgress.total}
             </span>
           </div>
         )}

@@ -85,6 +85,15 @@ function getThingThumbnailSignature(thing: ThingType): string {
     .join('|')
 }
 
+function getThingThumbnailCacheKey(
+  thing: ThingType,
+  category: ThingCategory,
+  transparent: boolean,
+  effectPreviewFrameMode: EffectPreviewFrameMode
+): string {
+  return `${category}:${thing.id}:${transparent ? 1 : 0}:${effectPreviewFrameMode}:${getThingThumbnailSignature(thing)}`
+}
+
 function getOffscreenCanvas(width: number, height: number): HTMLCanvasElement {
   if (!_offscreenCanvas) {
     _offscreenCanvas = document.createElement('canvas')
@@ -216,6 +225,25 @@ function renderThingThumbnail(
   return dataUrl
 }
 
+export function warmThingThumbnailCache(
+  thing: ThingType,
+  category: ThingCategory,
+  transparent: boolean,
+  effectPreviewFrameMode: EffectPreviewFrameMode = 'first'
+): string | null {
+  if (!thing.frameGroups?.length) return null
+
+  const cacheKey = getThingThumbnailCacheKey(thing, category, transparent, effectPreviewFrameMode)
+  const cached = thumbnailCache.get(cacheKey)
+  if (cached) return cached
+
+  const url = renderThingThumbnail(thing, category, transparent, effectPreviewFrameMode)
+  if (url) {
+    thumbnailCache.set(cacheKey, url)
+  }
+  return url
+}
+
 // ---------------------------------------------------------------------------
 // Hook
 // ---------------------------------------------------------------------------
@@ -234,11 +262,14 @@ export function useSpriteThumbnail(
   const thingSignature = useMemo(() => getThingThumbnailSignature(thing), [thing])
 
   const dataUrl = useMemo(() => {
+    // Keep cache hits stable, but retry rendering when a file-backed sprite batch arrives.
+    void spriteCacheRevision
+
     if (!thing || !thing.frameGroups?.length) {
       return null
     }
 
-    const cacheKey = `${category}:${thing.id}:${transparent ? 1 : 0}:${effectPreviewFrameMode}:${spriteCacheRevision}:${thingSignature}`
+    const cacheKey = `${category}:${thing.id}:${transparent ? 1 : 0}:${effectPreviewFrameMode}:${thingSignature}`
 
     // Check module-level cache
     const cached = thumbnailCache.get(cacheKey)
