@@ -5,6 +5,7 @@
  */
 
 import React, { useEffect, useRef } from 'react'
+import { useTranslation } from 'react-i18next'
 import { IconClose } from './Icons'
 
 interface ModalProps {
@@ -28,6 +29,7 @@ export function Modal({
   closeOnBackdrop = true,
   bodyScrollable = true
 }: ModalProps): React.JSX.Element | null {
+  const { t } = useTranslation()
   const dialogRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
@@ -71,7 +73,7 @@ export function Modal({
           <button
             className="flex h-8 w-8 items-center justify-center rounded-full text-text-secondary transition-colors hover:bg-bg-hover hover:text-text-primary"
             onClick={onClose}
-            title="Close"
+            title={t('labels.close')}
           >
             <IconClose size={18} />
           </button>

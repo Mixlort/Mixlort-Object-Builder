@@ -111,9 +111,9 @@ describe('SpritePanel', () => {
   // -----------------------------------------------------------------------
 
   describe('empty state', () => {
-    it('shows "No object selected" when no editing data', () => {
+    it('shows "Nenhum objeto selecionado" when no editing data', () => {
       render(<SpritePanel />)
-      expect(screen.getByText('No object selected')).toBeInTheDocument()
+      expect(screen.getByText('Nenhum objeto selecionado')).toBeInTheDocument()
     })
 
     it('shows header with "Sprites" label', () => {
@@ -175,10 +175,10 @@ describe('SpritePanel', () => {
       expect(screen.getByText('#50')).toBeInTheDocument()
     })
 
-    it('shows "No sprites" when frame group has empty spriteIndex', () => {
+    it('shows "Vazio" when frame group has empty spriteIndex', () => {
       loadEditorWithThing(100, ThingCategory.ITEM, [])
       render(<SpritePanel />)
-      expect(screen.getByText('Empty')).toBeInTheDocument()
+      expect(screen.getByText('Vazio')).toBeInTheDocument()
     })
 
     it('renders canvas elements for each sprite cell', () => {
@@ -525,7 +525,7 @@ describe('SpritePanel', () => {
       expect(screen.getByTestId('frame-group-select')).toBeInTheDocument()
     })
 
-    it('has Default and Walking options', () => {
+    it('has Parado and Andando options', () => {
       const thing = makeThing(100, ThingCategory.OUTFIT)
       const walkingFg = createFrameGroup()
       walkingFg.type = FrameGroupType.WALKING
@@ -541,8 +541,8 @@ describe('SpritePanel', () => {
       render(<SpritePanel />)
       const select = screen.getByTestId('frame-group-select') as HTMLSelectElement
       expect(select.options).toHaveLength(2)
-      expect(select.options[0].textContent).toBe('Idle')
-      expect(select.options[1].textContent).toBe('Walking')
+      expect(select.options[0].textContent).toBe('Parado')
+      expect(select.options[1].textContent).toBe('Andando')
     })
 
     it('switches to walking frame group', () => {
@@ -627,7 +627,7 @@ describe('SpritePanel', () => {
   // -----------------------------------------------------------------------
 
   describe('thing change', () => {
-    it('resets to "No object selected" when editing data is cleared', () => {
+    it('resets to "Nenhum objeto selecionado" when editing data is cleared', () => {
       loadEditorWithThing(100, ThingCategory.ITEM)
       const { rerender } = render(<SpritePanel />)
       expect(screen.getByText('Sprites (4)')).toBeInTheDocument()
@@ -636,7 +636,7 @@ describe('SpritePanel', () => {
         useEditorStore.getState().setEditingThingData(null)
       })
       rerender(<SpritePanel />)
-      expect(screen.getByText('No object selected')).toBeInTheDocument()
+      expect(screen.getByText('Nenhum objeto selecionado')).toBeInTheDocument()
     })
 
     it('updates grid when different thing is loaded', () => {

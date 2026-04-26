@@ -7,6 +7,7 @@
  */
 
 import React, { useState, useCallback, useEffect } from 'react'
+import { useTranslation } from 'react-i18next'
 
 export interface PaginationStepperProps {
   /** Current value (e.g., selected thing ID or sprite index) */
@@ -31,6 +32,7 @@ export function PaginationStepper({
   onChange,
   disabled = false
 }: PaginationStepperProps): React.JSX.Element {
+  const { t } = useTranslation()
   const [inputValue, setInputValue] = useState(String(value))
 
   // Sync input text when controlled value changes externally
@@ -89,7 +91,7 @@ export function PaginationStepper({
         className={btnClass}
         onClick={handleFirst}
         disabled={atMin}
-        title="First"
+        title={t('labels.first')}
         data-testid="page-first"
       >
         |&lsaquo;
@@ -99,7 +101,7 @@ export function PaginationStepper({
         className={btnClass}
         onClick={handlePrevPage}
         disabled={atMin}
-        title="Previous page"
+        title={t('labels.previousPage')}
         data-testid="page-prev-page"
       >
         &laquo;
@@ -109,7 +111,7 @@ export function PaginationStepper({
         className={btnClass}
         onClick={handlePrev}
         disabled={atMin}
-        title="Previous"
+        title={t('labels.previous')}
         data-testid="page-prev"
       >
         &lsaquo;
@@ -129,7 +131,7 @@ export function PaginationStepper({
         className={btnClass}
         onClick={handleNext}
         disabled={atMax}
-        title="Next"
+        title={t('labels.next')}
         data-testid="page-next"
       >
         &rsaquo;
@@ -139,7 +141,7 @@ export function PaginationStepper({
         className={btnClass}
         onClick={handleNextPage}
         disabled={atMax}
-        title="Next page"
+        title={t('labels.nextPage')}
         data-testid="page-next-page"
       >
         &raquo;
@@ -149,7 +151,7 @@ export function PaginationStepper({
         className={btnClass}
         onClick={handleLast}
         disabled={atMax}
-        title="Last"
+        title={t('labels.last')}
         data-testid="page-last"
       >
         &rsaquo;|

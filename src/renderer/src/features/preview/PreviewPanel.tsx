@@ -367,7 +367,7 @@ function PreviewSection({
             type="button"
             className="rounded px-2 py-0.5 text-xs hover:bg-bg-hover"
             onClick={handlePlay}
-            title="Play"
+            title={t('labels.play')}
           >
             &#9654;
           </button>
@@ -375,7 +375,7 @@ function PreviewSection({
             type="button"
             className="rounded px-2 py-0.5 text-xs hover:bg-bg-hover"
             onClick={handlePause}
-            title="Pause"
+            title={t('labels.pause')}
           >
             &#9646;&#9646;
           </button>
@@ -383,7 +383,7 @@ function PreviewSection({
             type="button"
             className="rounded px-2 py-0.5 text-xs hover:bg-bg-hover"
             onClick={handleStop}
-            title="Stop"
+            title={t('labels.stop')}
           >
             &#9632;
           </button>
@@ -470,8 +470,10 @@ function ColorizeSection({
           disabled={!canColorize}
           onChange={(e) => onColorizeToggle(e.target.checked)}
         />
-        <span className="text-xs font-semibold uppercase text-secondary">Colorize</span>
-        {!canColorize && <span className="text-[10px] text-text-muted">(no blend layer)</span>}
+        <span className="text-xs font-semibold uppercase text-secondary">{t('labels.colorize')}</span>
+        {!canColorize && (
+          <span className="text-[10px] text-text-muted">({t('labels.noBlendLayer')})</span>
+        )}
       </label>
 
       <div className={`space-y-1 ${controlsDisabled ? 'opacity-40 pointer-events-none' : ''}`}>
@@ -506,7 +508,7 @@ function ColorizeSection({
             checked={(outfitData.addons & 1) !== 0}
             onChange={() => handleAddonToggle(1)}
           />
-          Addon 1
+          {t('labels.addon1')}
         </label>
         <label className="flex items-center gap-1.5 text-xs">
           <input
@@ -515,7 +517,7 @@ function ColorizeSection({
             checked={(outfitData.addons & 2) !== 0}
             onChange={() => handleAddonToggle(2)}
           />
-          Addon 2
+          {t('labels.addon2')}
         </label>
       </div>
     </div>

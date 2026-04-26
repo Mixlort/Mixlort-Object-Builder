@@ -209,7 +209,7 @@ export function ExportDialog({
           label={t('labels.name')}
           value={fileName}
           onChange={setFileName}
-          placeholder="Enter file name..."
+          placeholder={t('labels.name')}
         />
 
         {/* Output folder */}
@@ -217,7 +217,7 @@ export function ExportDialog({
           label={t('controls.selectFolder')}
           value={directory}
           onBrowse={handleBrowseDirectory}
-          placeholder="Select output folder..."
+          placeholder={t('controls.selectFolder')}
         />
 
         {/* Format selection */}
@@ -257,7 +257,7 @@ export function ExportDialog({
         </FieldGroup>
 
         {/* Format-specific options */}
-        <FieldGroup label="Options">
+        <FieldGroup label={t('labels.options')}>
           {/* PNG options */}
           {format === ImageFormat.PNG && (
             <CheckboxField
@@ -269,7 +269,7 @@ export function ExportDialog({
 
           {/* BMP options */}
           {format === ImageFormat.BMP && (
-            <p className="text-xs text-text-secondary">No additional options for BMP format.</p>
+            <p className="text-xs text-text-secondary">Nenhuma opção adicional para o formato BMP.</p>
           )}
 
           {/* JPG options */}
@@ -294,10 +294,10 @@ export function ExportDialog({
                 label={t('labels.version')}
                 value={selectedVersion?.valueStr ?? ''}
                 onChange={handleVersionChange}
-                options={[{ value: '', label: 'Select version...' }, ...versionOptions]}
+                options={[{ value: '', label: `${t('labels.select')}...` }, ...versionOptions]}
               />
               <SelectField
-                label="OBD Version"
+                label={t('labels.obdVersion')}
                 value={String(obdVersion)}
                 onChange={(v) => setObdVersion(Number(v) as typeof obdVersion)}
                 options={OBD_VERSION_OPTIONS}
@@ -307,7 +307,7 @@ export function ExportDialog({
         </FieldGroup>
 
         {showCategoryIdFilter && (
-          <FieldGroup label={`${categoryFilterLabel[0].toUpperCase()}${categoryFilterLabel.slice(1)} Filter`}>
+          <FieldGroup label={`Filtro de ${categoryFilterLabel}`}>
             <div className="flex flex-col gap-2">
               <CheckboxField
                 label={`Exportar IDs específicos (${categoryFilterLabel})`}

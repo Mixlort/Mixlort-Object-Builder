@@ -1100,7 +1100,7 @@ function TextureTabContent({
         {/* Direction buttons */}
         {showDirections && frameGroup && frameGroup.patternX >= 2 && (
           <div className="flex items-center gap-1" data-testid="direction-buttons">
-            <span className="mr-1 text-[10px] text-text-secondary">Direction:</span>
+            <span className="mr-1 text-[10px] text-text-secondary">{t('labels.direction')}:</span>
             {([Direction.NORTH, Direction.EAST, Direction.SOUTH, Direction.WEST] as const)
               .filter((_, i) => i < (frameGroup?.patternX ?? 0))
               .map((dir) => (
@@ -1140,7 +1140,7 @@ function TextureTabContent({
         {/* Frame Group selector - outfits with multiple groups */}
         {isOutfit && groupCount > 1 && (
           <div className="flex items-center gap-2">
-            <span className="text-[10px] text-text-secondary">Group:</span>
+            <span className="text-[10px] text-text-secondary">{t('labels.group')}:</span>
             <select
               value={frameGroupType}
               onChange={(e) =>
@@ -1158,7 +1158,7 @@ function TextureTabContent({
         {/* Frame slider - animated things */}
         {frameGroup && frameGroup.frames > 1 && (
           <div className="flex items-center gap-2">
-            <span className="text-[10px] text-text-secondary">Frame:</span>
+            <span className="text-[10px] text-text-secondary">{t('labels.frame')}:</span>
             <input
               type="range"
               min="0"
@@ -1756,7 +1756,7 @@ export function ThingTypeEditor(): React.JSX.Element {
           <button
             type="button"
             className="flex h-6 w-6 items-center justify-center rounded-full text-text-secondary transition-colors hover:bg-bg-hover hover:text-text-primary"
-            title="Hide Item Panel"
+            title={t('labels.hideItemPanel')}
             onClick={() => togglePanel('editor')}
           >
             <IconClose size={14} />
@@ -1793,7 +1793,7 @@ export function ThingTypeEditor(): React.JSX.Element {
         <button
           type="button"
           className="flex h-6 w-6 items-center justify-center rounded-full text-text-secondary transition-colors hover:bg-bg-hover hover:text-text-primary"
-          title="Hide Item Panel"
+          title={t('labels.hideItemPanel')}
           onClick={() => togglePanel('editor')}
         >
           <IconClose size={14} />

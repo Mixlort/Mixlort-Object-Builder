@@ -78,11 +78,11 @@ export function PreferencesDialog({
 
   const themeOptions = useMemo(
     () => [
-      { value: 'system', label: 'System' },
-      { value: 'light', label: 'Light' },
-      { value: 'dark', label: 'Dark' }
+      { value: 'system', label: t('labels.system') },
+      { value: 'light', label: t('labels.light') },
+      { value: 'dark', label: t('labels.dark') }
     ],
-    []
+    [t]
   )
 
   const languageOptions = useMemo(
@@ -121,7 +121,7 @@ export function PreferencesDialog({
       footer={
         <>
           <span className="mr-auto text-xs text-text-secondary">
-            Some changes may require restart
+            {t('labels.restartMayBeRequired')}
           </span>
           <DialogButton label={t('labels.cancel')} onClick={handleClose} />
           <DialogButton label={t('labels.confirm')} onClick={handleConfirm} primary />
@@ -196,7 +196,7 @@ function GeneralTab({
     <div className="flex flex-col gap-3">
       <FieldGroup label={t('labels.appearance')}>
         <SelectField
-          label="Theme"
+          label={t('labels.theme')}
           value={settings.theme}
           onChange={(v) => onUpdate('theme', v as 'system' | 'light' | 'dark')}
           options={themeOptions}
@@ -212,7 +212,7 @@ function GeneralTab({
         />
       </FieldGroup>
 
-      <FieldGroup label="Edition">
+      <FieldGroup label={t('labels.edition')}>
         <CheckboxField
           label={t('controls.autosaveChanges')}
           checked={settings.autosaveThingChanges}
@@ -223,7 +223,7 @@ function GeneralTab({
       <FieldGroup label={t('labels.clipboardAction')}>
         <div className="flex flex-col gap-2">
           <SelectField
-            label="Action"
+            label={t('labels.action')}
             value={String(settings.thingListClipboardAction)}
             onChange={(v) => onUpdate('thingListClipboardAction', Number(v))}
             options={clipboardActionOptions}
@@ -239,7 +239,7 @@ function GeneralTab({
       <FieldGroup label={t('labels.listAmount')}>
         <div className="flex flex-col gap-2">
           <NumberInputField
-            label="Objects"
+            label={t('labels.objects')}
             value={settings.objectsListAmount}
             onChange={(v) => onUpdate('objectsListAmount', v)}
             min={100}
@@ -264,7 +264,7 @@ function CustomClientTab({ settings, onUpdate }: TabProps): React.JSX.Element {
   const { t } = useTranslation()
   return (
     <div className="flex flex-col gap-3">
-      <FieldGroup label="Open New">
+      <FieldGroup label={t('controls.openNew')}>
         <div className="flex flex-col gap-2">
           <CheckboxField
             label={t('controls.extendedAlwaysSelected')}
@@ -289,7 +289,7 @@ function SpriteSheetTab({ settings, onUpdate }: TabProps): React.JSX.Element {
       <FieldGroup label={t('controls.saveObjectProperties')}>
         <div className="flex flex-col gap-2">
           <RadioField
-            label="None"
+            label={t('labels.none')}
             name="savingSpriteSheet"
             value="0"
             checked={settings.savingSpriteSheet === 0}

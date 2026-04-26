@@ -72,7 +72,6 @@ import {
 import type { EffectPreviewFrameMode } from '../../hooks/effect-preview-frame'
 import {
   EFFECT_COLOR_BUCKETS,
-  EFFECT_COLOR_BUCKET_LABELS,
   filterEffectsByColorBucket,
   sortEffectsByColorBucket,
   type EffectColorFilter
@@ -94,7 +93,6 @@ const FAST_SCROLL_SYNC_VIEWPORT_RATIO = 0.75
 const PAGE_PRELOAD_CHUNK_SIZE = 750
 const THUMBNAIL_WARM_CHUNK_SIZE = 75
 const EFFECT_ANALYSIS_CHUNK_SIZE = 2000
-const EFFECT_ANALYSIS_CACHE_NOTE = 'This runs once and stays cached afterwards.'
 
 /** Default page size matching legacy objectsListAmount setting */
 const DEFAULT_PAGE_SIZE = 100
@@ -134,9 +132,14 @@ export interface ThingListLoadingState {
   note?: string
 }
 
+type ThingListLoadingLabels = {
+  preparingPage: string
+}
+
 export function getThingListLoadingMessages(
   filterLoadingLabel: string,
   pagePrepareProgress: PagePrepareProgress | null,
+  labels: ThingListLoadingLabels,
   filterLoadingProgress: PagePrepareProgress | null = null,
   filterLoadingNote: string | null = null
 ): {
@@ -159,7 +162,7 @@ export function getThingListLoadingMessages(
       globalLabel: null,
       globalProgress: null,
       globalNote: null,
-      localLabel: `Preparing page... ${pagePrepareProgress.done}/${pagePrepareProgress.total}`
+      localLabel: `${labels.preparingPage} ${pagePrepareProgress.done}/${pagePrepareProgress.total}`
     }
   }
 
@@ -381,6 +384,16 @@ export function ThingListPanel({
   onLoadingStateChange
 }: ThingListPanelProps = {}): React.JSX.Element {
   const { t } = useTranslation()
+  const loadingLabels = useMemo(
+    () => ({
+      filteringObjects: t('labels.filteringObjects'),
+      loadingPageSprites: t('labels.loadingPageSprites'),
+      preparingThumbnails: t('labels.preparingThumbnails'),
+      preparingPage: t('labels.preparingPage'),
+      cachedAfterFirstRun: t('labels.cachedAfterFirstRun')
+    }),
+    [t]
+  )
   const [viewMode, setViewMode] = useState<ViewMode>('grid')
   const [searchInput, setSearchInput] = useState('')
   const [searchFilter, setSearchFilter] = useState('')
@@ -564,9 +577,9 @@ export function ThingListPanel({
     let cancelled = false
     void (async () => {
       const spriteStore = useSpriteStore.getState()
-      setFilterLoadingLabel('Filtering objects...')
+      setFilterLoadingLabel(loadingLabels.filteringObjects)
       setFilterLoadingProgress({ done: 0, total: effectColorAnalysisIds.length })
-      setFilterLoadingNote(EFFECT_ANALYSIS_CACHE_NOTE)
+      setFilterLoadingNote(loadingLabels.cachedAfterFirstRun)
 
       for (
         let start = 0;
@@ -594,7 +607,7 @@ export function ThingListPanel({
     return () => {
       cancelled = true
     }
-  }, [effectColorAnalysisKey])
+  }, [effectColorAnalysisKey, loadingLabels.cachedAfterFirstRun, loadingLabels.filteringObjects])
 
   const effectColorAnalysisReady =
     effectColorAnalysisKey === '' || readyEffectColorAnalysisKey === effectColorAnalysisKey
@@ -885,7 +898,7 @@ export function ThingListPanel({
       const spriteStore = useSpriteStore.getState()
       const visibleSpritesReady = spriteStore.areSpritesCached(visibleSpriteIds)
       if (!visibleSpritesReady) {
-        setFilterLoadingLabel('Loading page sprites...')
+        setFilterLoadingLabel(loadingLabels.loadingPageSprites)
         await spriteStore.ensureSpritesCached(visibleSpriteIds)
       }
       if (!isCurrent()) return
@@ -897,7 +910,7 @@ export function ThingListPanel({
         effectPreviewFrameMode
       )
       if (!visibleThumbnailsReady) {
-        setFilterLoadingLabel('Preparing thumbnails...')
+        setFilterLoadingLabel(loadingLabels.preparingThumbnails)
         warmThumbnails(
           visibleThingsRef.current,
           currentCategory,
@@ -981,6 +994,8 @@ export function ThingListPanel({
     isFileBackedSpriteSource,
     pageThings,
     pageThumbnailSpriteIdsKey,
+    loadingLabels.loadingPageSprites,
+    loadingLabels.preparingThumbnails,
     transparentEnabled
   ])
 
@@ -990,6 +1005,7 @@ export function ThingListPanel({
     const { globalLabel, globalProgress, globalNote } = getThingListLoadingMessages(
       filterLoadingLabel,
       pagePrepareProgress,
+      loadingLabels,
       filterLoadingProgress,
       filterLoadingNote
     )
@@ -1008,6 +1024,7 @@ export function ThingListPanel({
     filterLoadingLabel,
     filterLoadingNote,
     filterLoadingProgress,
+    loadingLabels,
     onLoadingStateChange,
     pagePrepareProgress
   ])
@@ -1028,10 +1045,11 @@ export function ThingListPanel({
       getThingListLoadingMessages(
         filterLoadingLabel,
         pagePrepareProgress,
+        loadingLabels,
         filterLoadingProgress,
         filterLoadingNote
       ),
-    [filterLoadingLabel, filterLoadingNote, filterLoadingProgress, pagePrepareProgress]
+    [filterLoadingLabel, filterLoadingNote, filterLoadingProgress, loadingLabels, pagePrepareProgress]
   )
 
   // -------------------------------------------------------------------------
@@ -1639,7 +1657,7 @@ export function ThingListPanel({
       {/* Search + view mode toggle */}
       <div className="flex h-7 shrink-0 items-center gap-1 border-b border-border-subtle px-1">
         <button
-          title="List view"
+          title={t('labels.listView')}
           className={`flex h-5 w-5 items-center justify-center rounded ${
             viewMode === 'list'
               ? 'bg-bg-tertiary text-text-primary'
@@ -1651,7 +1669,7 @@ export function ThingListPanel({
           <IconList size={12} />
         </button>
         <button
-          title="Grid view"
+          title={t('labels.gridView')}
           className={`flex h-5 w-5 items-center justify-center rounded ${
             viewMode === 'grid'
               ? 'bg-bg-tertiary text-text-primary'
@@ -1665,7 +1683,7 @@ export function ThingListPanel({
         <input
           type="text"
           className="h-5 flex-1 rounded border border-border bg-bg-input px-1.5 text-[10px] text-text-primary outline-none transition-colors focus:border-border-focus"
-          placeholder="Filter by ID or name..."
+          placeholder={t('labels.filterByIdOrName')}
           value={searchInput}
           onChange={handleSearchChange}
           disabled={!isLoaded}
@@ -1676,12 +1694,14 @@ export function ThingListPanel({
           value={minGridArea}
           onChange={handleGridAreaFilterChange}
           disabled={!isLoaded}
-          title="Filter by minimum grid area"
+          title={t('labels.filterByMinimumGridArea')}
           data-testid="grid-area-filter"
         >
           {GRID_AREA_FILTER_OPTIONS.map((option) => (
             <option key={option.value} value={option.value}>
-              {option.label}
+              {option.value === 0
+                ? t('labels.all')
+                : `${option.value}+ ${t('labels.cells').toLowerCase()}`}
             </option>
           ))}
         </select>
@@ -1692,18 +1712,18 @@ export function ThingListPanel({
               value={effectColorFilter}
               onChange={handleEffectColorFilterChange}
               disabled={!isLoaded}
-              title="Filter effects by dominant color"
+              title={t('labels.filterEffectsByDominantColor')}
               data-testid="effect-color-filter"
             >
-              <option value="all">All</option>
+              <option value="all">{t('labels.all')}</option>
               {EFFECT_COLOR_BUCKETS.map((bucket) => (
                 <option key={bucket} value={bucket}>
-                  {EFFECT_COLOR_BUCKET_LABELS[bucket]}
+                  {t(`labels.${bucket}`)}
                 </option>
               ))}
             </select>
             <button
-              title="Sort effects by dominant color"
+              title={t('labels.sortEffectsByDominantColor')}
               className={`flex h-5 w-5 items-center justify-center rounded text-[10px] font-semibold ${
                 effectColorSortEnabled
                   ? 'bg-bg-tertiary text-text-primary'
@@ -1739,19 +1759,19 @@ export function ThingListPanel({
             <div className="pointer-events-none absolute top-2 right-2 z-10 flex w-fit items-center gap-2 rounded border border-border bg-bg-primary/95 px-2 py-1 text-[10px] text-text-secondary shadow">
               <span className="h-2 w-2 animate-pulse rounded-full bg-accent" />
               <span>
-                Loading sprites
+                {t('labels.loadingSprites')}
                 {spriteCachePendingCount > 0 ? ` (${spriteCachePendingCount})` : ''}
               </span>
             </div>
           )}
         {!isLoaded ? (
           <div className="flex h-full items-center justify-center">
-            <span className="text-xs text-text-secondary">No project loaded</span>
+            <span className="text-xs text-text-secondary">{t('app.noProjectLoaded')}</span>
           </div>
         ) : pageThings.length === 0 ? (
           <div className="flex h-full items-center justify-center">
             <span className="text-xs text-text-secondary">
-              {searchFilter ? 'No results found' : 'No objects'}
+              {searchFilter ? t('labels.noResultsFound') : t('labels.noObjects')}
             </span>
           </div>
         ) : (
@@ -1877,7 +1897,7 @@ export function ThingListPanel({
         />
         <ActionButton
           icon={<IconAdd size={14} />}
-          title="New"
+          title={t('labels.new')}
           disabled={!isLoaded}
           onClick={() => {
             if (!clientInfo) return

@@ -24,6 +24,10 @@ import type { ThingType } from '../../../types'
 // Helpers
 // ---------------------------------------------------------------------------
 
+const loadingLabels = {
+  preparingPage: 'Preparando página...'
+}
+
 function makeThing(id: number, category: ThingCategory, marketName = ''): ThingType {
   const t = createThingType()
   t.id = id
@@ -209,30 +213,36 @@ describe('ThingListPanel', () => {
     })
 
     it('uses the global overlay only for initial loading and keeps page warmup local', () => {
-      expect(getThingListLoadingMessages('Loading page sprites...', null)).toEqual({
-        globalLabel: 'Loading page sprites...',
+      expect(getThingListLoadingMessages('Carregando sprites da página...', null, loadingLabels)).toEqual({
+        globalLabel: 'Carregando sprites da página...',
         globalProgress: null,
         globalNote: null,
         localLabel: null
       })
 
       expect(
-        getThingListLoadingMessages('Filtering objects...', null, { done: 120, total: 240 }, 'Cached')
+        getThingListLoadingMessages(
+          'Filtrando objetos...',
+          null,
+          loadingLabels,
+          { done: 120, total: 240 },
+          'Em cache'
+        )
       ).toEqual({
-        globalLabel: 'Filtering objects...',
+        globalLabel: 'Filtrando objetos...',
         globalProgress: { done: 120, total: 240 },
-        globalNote: 'Cached',
+        globalNote: 'Em cache',
         localLabel: null
       })
 
-      expect(getThingListLoadingMessages('', { done: 57_000, total: 111_206 })).toEqual({
+      expect(getThingListLoadingMessages('', { done: 57_000, total: 111_206 }, loadingLabels)).toEqual({
         globalLabel: null,
         globalProgress: null,
         globalNote: null,
-        localLabel: 'Preparing page... 57000/111206'
+        localLabel: 'Preparando página... 57000/111206'
       })
 
-      expect(getThingListLoadingMessages('', null)).toEqual({
+      expect(getThingListLoadingMessages('', null, loadingLabels)).toEqual({
         globalLabel: null,
         globalProgress: null,
         globalNote: null,
@@ -249,18 +259,18 @@ describe('ThingListPanel', () => {
     it('renders the panel with category tabs', () => {
       render(<ThingListPanel />)
       expect(screen.getByTestId('thing-list-panel')).toBeInTheDocument()
-      expect(screen.getByText('Items')).toBeInTheDocument()
-      expect(screen.getByText('Outfits')).toBeInTheDocument()
-      expect(screen.getByText('Effects')).toBeInTheDocument()
-      expect(screen.getByText('Missiles')).toBeInTheDocument()
+      expect(screen.getByText('Itens')).toBeInTheDocument()
+      expect(screen.getByText('Roupas')).toBeInTheDocument()
+      expect(screen.getByText('Efeitos')).toBeInTheDocument()
+      expect(screen.getByText('Mísseis')).toBeInTheDocument()
     })
 
-    it('shows "No project loaded" when no project is loaded', () => {
+    it('shows "Nenhum projeto carregado" when no project is loaded', () => {
       render(<ThingListPanel />)
-      expect(screen.getByText('No project loaded')).toBeInTheDocument()
+      expect(screen.getByText('Nenhum projeto carregado')).toBeInTheDocument()
     })
 
-    it('shows "No objects" when project is loaded but category is empty', () => {
+    it('shows "Nenhum objeto" when project is loaded but category is empty', () => {
       const clientInfo = createClientInfo()
       useAppStore.setState({
         project: {
@@ -276,7 +286,7 @@ describe('ThingListPanel', () => {
       })
 
       render(<ThingListPanel />)
-      expect(screen.getByText('No objects')).toBeInTheDocument()
+      expect(screen.getByText('Nenhum objeto')).toBeInTheDocument()
     })
 
     it('renders items when project is loaded', () => {
@@ -448,7 +458,7 @@ describe('ThingListPanel', () => {
       vi.useRealTimers()
     })
 
-    it('shows "No results found" when filter matches nothing', () => {
+    it('shows "Nenhum resultado encontrado" when filter matches nothing', () => {
       vi.useFakeTimers()
       loadProjectWithThings()
       render(<ThingListPanel />)
@@ -459,7 +469,7 @@ describe('ThingListPanel', () => {
         vi.advanceTimersByTime(200)
       })
 
-      expect(screen.getByText('No results found')).toBeInTheDocument()
+      expect(screen.getByText('Nenhum resultado encontrado')).toBeInTheDocument()
       vi.useRealTimers()
     })
 
@@ -581,7 +591,7 @@ describe('ThingListPanel', () => {
 
       expect(onLoadingStateChange).toHaveBeenCalledWith({
         active: true,
-        label: 'Loading page sprites...'
+        label: 'Carregando sprites da página...'
       })
 
       await act(async () => {
@@ -635,7 +645,7 @@ describe('ThingListPanel', () => {
 
       expect(onLoadingStateChange).toHaveBeenCalledWith({
         active: true,
-        label: 'Loading page sprites...'
+        label: 'Carregando sprites da página...'
       })
 
       await act(async () => {
@@ -857,9 +867,9 @@ describe('ThingListPanel', () => {
       expect(onLoadingStateChange).toHaveBeenCalledWith(
         expect.objectContaining({
           active: true,
-          label: 'Filtering objects...',
+          label: 'Filtrando objetos...',
           progress: { done: 0, total: 2 },
-          note: 'This runs once and stays cached afterwards.'
+          note: 'Isso roda uma vez e depois fica em cache.'
         })
       )
 
@@ -922,13 +932,13 @@ describe('ThingListPanel', () => {
       expect(onLoadingStateChange).not.toHaveBeenCalledWith(
         expect.objectContaining({
           active: true,
-          label: 'Filtering objects...'
+          label: 'Filtrando objetos...'
         })
       )
       expect(onLoadingStateChange).not.toHaveBeenCalledWith(
         expect.objectContaining({
           active: true,
-          label: 'Loading page sprites...'
+          label: 'Carregando sprites da página...'
         })
       )
       expect(screen.getByTestId('thing-grid-item-1')).toBeInTheDocument()
@@ -988,13 +998,13 @@ describe('ThingListPanel', () => {
       expect(onLoadingStateChange).not.toHaveBeenCalledWith(
         expect.objectContaining({
           active: true,
-          label: 'Loading page sprites...'
+          label: 'Carregando sprites da página...'
         })
       )
       expect(onLoadingStateChange).not.toHaveBeenCalledWith(
         expect.objectContaining({
           active: true,
-          label: 'Preparing thumbnails...'
+          label: 'Preparando miniaturas...'
         })
       )
       vi.useRealTimers()
@@ -1085,13 +1095,13 @@ describe('ThingListPanel', () => {
 
       fireEvent.contextMenu(screen.getByTestId('thing-grid-item-100'))
 
-      expect(screen.getByText('Replace')).toBeInTheDocument()
-      expect(screen.getByText('Export')).toBeInTheDocument()
-      expect(screen.getByText('Edit')).toBeInTheDocument()
-      expect(screen.getByText('Duplicate')).toBeInTheDocument()
-      expect(screen.getByText('Remove')).toBeInTheDocument()
-      expect(screen.getByText('Copy Object')).toBeInTheDocument()
-      expect(screen.getByText('Paste Object')).toBeInTheDocument()
+      expect(screen.getByText('Substituir')).toBeInTheDocument()
+      expect(screen.getByText('Exportar')).toBeInTheDocument()
+      expect(screen.getByText('Editar')).toBeInTheDocument()
+      expect(screen.getByText('Duplicar')).toBeInTheDocument()
+      expect(screen.getByText('Remover')).toBeInTheDocument()
+      expect(screen.getByText('Copiar objeto')).toBeInTheDocument()
+      expect(screen.getByText('Colar objeto')).toBeInTheDocument()
     })
 
     it('closes context menu on Escape', () => {

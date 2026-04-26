@@ -1132,14 +1132,14 @@ export function SpritePanel({
           <button
             type="button"
             className="flex h-6 w-6 items-center justify-center rounded-full text-text-secondary transition-colors hover:bg-bg-hover hover:text-text-primary"
-            title="Hide Sprite Panel"
+            title={t('labels.hideSpritePanel')}
             onClick={() => togglePanel('sprites')}
           >
             <IconClose size={14} />
           </button>
         </div>
         <div className="flex flex-1 items-center justify-center">
-          <span className="text-xs text-text-secondary">No object selected</span>
+          <span className="text-xs text-text-secondary">{t('labels.noObjectSelected')}</span>
         </div>
       </div>
     )
@@ -1180,7 +1180,7 @@ export function SpritePanel({
           <button
             type="button"
             className="flex h-6 w-6 items-center justify-center rounded-full text-text-secondary transition-colors hover:bg-bg-hover hover:text-text-primary"
-            title="Hide Sprite Panel"
+            title={t('labels.hideSpritePanel')}
             onClick={() => togglePanel('sprites')}
           >
             <IconClose size={14} />
@@ -1241,7 +1241,7 @@ export function SpritePanel({
       >
         <button
           className="flex-1 rounded px-1 py-0.5 text-[10px] text-text-secondary hover:bg-bg-tertiary hover:text-text-primary disabled:opacity-40"
-          title="Import sprite from image file"
+          title={t('controls.importSprite')}
           data-testid="sprite-import-btn"
         >
           {t('labels.import')}
@@ -1249,7 +1249,7 @@ export function SpritePanel({
         <button
           className="flex-1 rounded px-1 py-0.5 text-[10px] text-text-secondary hover:bg-bg-tertiary hover:text-text-primary disabled:opacity-40"
           disabled={selectedSpriteTargets.length === 0}
-          title="Export selected sprite(s) as PNG"
+          title={t('controls.exportingSprites')}
           data-testid="sprite-export-btn"
           onClick={() => {
             void handleExportSelected()
@@ -1260,7 +1260,7 @@ export function SpritePanel({
         <button
           className="flex-1 rounded px-1 py-0.5 text-[10px] text-text-secondary hover:bg-bg-tertiary hover:text-text-primary disabled:opacity-40"
           disabled={selectedSpriteTargets.length === 0}
-          title="Replace selected sprite"
+          title={t('controls.replaceSprite')}
           data-testid="sprite-replace-btn"
           onClick={() => {
             void handleReplaceSelected()
@@ -1271,7 +1271,7 @@ export function SpritePanel({
         <button
           className="flex-1 rounded px-1 py-0.5 text-[10px] text-text-secondary hover:bg-bg-tertiary hover:text-text-primary disabled:opacity-40"
           disabled={selectedSlot === null}
-          title="Remove selected sprite"
+          title={t('controls.removeObject')}
           data-testid="sprite-remove-btn"
         >
           {t('labels.remove')}

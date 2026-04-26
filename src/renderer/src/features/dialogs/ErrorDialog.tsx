@@ -31,7 +31,7 @@ export function ErrorDialog({ open, onClose, messages }: ErrorDialogProps): Reac
     >
       <div className="flex flex-col gap-3">
         {messages.length === 0 ? (
-          <p className="text-xs text-text-secondary">No errors.</p>
+          <p className="text-xs text-text-secondary">{t('labels.noErrors')}</p>
         ) : (
           <textarea
             className="min-h-[200px] w-full resize-y rounded border border-border bg-bg-secondary p-3 font-mono text-xs text-error outline-none focus:border-accent"

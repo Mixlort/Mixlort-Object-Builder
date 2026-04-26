@@ -165,7 +165,7 @@ export function Toolbar({
       {/* Panel visibility */}
       <ToolbarButton
         icon={<IconViewer size={16} />}
-        title={showEditorPanel ? 'Hide Item Panel' : 'Show Item Panel'}
+        title={showEditorPanel ? t('labels.hideItemPanel') : t('labels.showItemPanel')}
         active={showEditorPanel}
         disabled={!isLoaded}
         testId="toolbar-toggle-editor-panel"
@@ -173,7 +173,7 @@ export function Toolbar({
       />
       <ToolbarButton
         icon={<IconGrid size={16} />}
-        title={showSpritesPanel ? 'Hide Sprite Panel' : 'Show Sprite Panel'}
+        title={showSpritesPanel ? t('labels.hideSpritePanel') : t('labels.showSpritePanel')}
         active={showSpritesPanel}
         disabled={!isLoaded}
         testId="toolbar-toggle-sprite-panel"
@@ -182,7 +182,7 @@ export function Toolbar({
       {/* Utilities */}
       <ToolbarButton
         icon={<IconLog size={16} />}
-        title={showLogPanel ? `${t('controls.logWindow')} (Ctrl+L)` : 'Show Log Window'}
+        title={showLogPanel ? `${t('controls.logWindow')} (Ctrl+L)` : t('labels.showLogWindow')}
         active={showLogPanel}
         onClick={() => dispatch(MENU_WINDOW_LOG)}
       />

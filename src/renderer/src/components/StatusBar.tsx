@@ -66,7 +66,7 @@ export function StatusBar(): React.JSX.Element {
               {clientInfo.readOnly && (
                 <>
                   <StatusSep />
-                  <StatusItem>PXG read-only</StatusItem>
+                  <StatusItem>{t('labels.pxgReadOnly')}</StatusItem>
                 </>
               )}
             </>

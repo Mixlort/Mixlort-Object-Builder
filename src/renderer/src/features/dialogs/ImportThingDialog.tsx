@@ -164,25 +164,25 @@ export function ImportThingDialog({
       <div className="flex flex-col gap-3">
         {/* File selection */}
         <BrowseField
-          label="File"
+          label={t('labels.file')}
           value={fileLabel}
           onBrowse={handleBrowse}
-          placeholder="Select .obd file..."
+          placeholder={`${t('controls.selectFile')} (.obd)...`}
         />
 
         {/* Preview */}
         <FieldGroup label={t('labels.preview')}>
-          {loading && <p className="text-xs text-text-secondary">Loading...</p>}
+          {loading && <p className="text-xs text-text-secondary">{t('labels.loading')}</p>}
 
           {error && <p className="text-xs text-error">{error}</p>}
 
           {!loading && !error && entries.length === 0 && (
-            <p className="text-xs text-text-secondary">Select a file to preview.</p>
+            <p className="text-xs text-text-secondary">{t('labels.selectFileToPreview')}</p>
           )}
 
           {firstEntry && !loading && (
             <div className="flex flex-col gap-1">
-              <InfoRow label="Files" value={entries.length} />
+              <InfoRow label={t('labels.files')} value={entries.length} />
               <InfoRow
                 label={t('labels.type')}
                 value={getCategoryLabel(firstEntry.thingData.thing.category)}
@@ -192,7 +192,7 @@ export function ImportThingDialog({
                 value={getVersionLabel(firstEntry.thingData.clientVersion)}
               />
               <InfoRow
-                label="OBD Version"
+                label={t('labels.obdVersion')}
                 value={
                   firstEntry.thingData.obdVersion === 0
                     ? 'v1.0'
@@ -220,7 +220,7 @@ export function ImportThingDialog({
         </FieldGroup>
 
         {/* Import action */}
-        <FieldGroup label="Action">
+        <FieldGroup label={t('labels.action')}>
           <div className="flex gap-4">
             <RadioField
               label={t('labels.add')}
