@@ -89,6 +89,7 @@ describe('Shared Settings Types', () => {
     expect(settings.maximized).toBe(true)
     expect(settings.showPreviewPanel).toBe(true)
     expect(settings.showThingsPanel).toBe(true)
+    expect(settings.showEditorPanel).toBe(true)
     expect(settings.showSpritesPanel).toBe(true)
     expect(settings.objectsListAmount).toBe(100)
     expect(settings.spritesListAmount).toBe(100)
@@ -103,7 +104,7 @@ describe('Shared Settings Types', () => {
     expect(settings.deleteAfterPaste).toBe(false)
     expect(settings.lastAttributeServer).toBe('tfs1.4')
     expect(settings.syncOtbOnAdd).toBe(true)
-    expect(settings.language).toBe('en_US')
+    expect(settings.language).toBe('pt_BR')
     expect(settings.showLogPanel).toBe(true)
   })
 
@@ -185,8 +186,8 @@ describe('Settings Persistence', () => {
     await writeFile(getSettingsPath(), JSON.stringify(different), 'utf-8')
 
     const settings2 = await loadSettings()
-    // Should still be the first loaded value (en_US), not fr_FR
-    expect(settings2.language).toBe('en_US')
+    // Should still be the first loaded value (pt_BR), not fr_FR
+    expect(settings2.language).toBe('pt_BR')
   })
 
   it('saveSettings writes a valid JSON file', async () => {
@@ -226,13 +227,13 @@ describe('Individual Get/Set', () => {
 
     // Original should not be affected
     const again = getSettings()
-    expect(again.language).toBe('en_US')
+    expect(again.language).toBe('pt_BR')
   })
 
   it('getSetting returns specific value', async () => {
     await loadSettings()
 
-    expect(getSetting('language')).toBe('en_US')
+    expect(getSetting('language')).toBe('pt_BR')
     expect(getSetting('jpegQuality')).toBe(100)
     expect(getSetting('extended')).toBe(false)
     expect(getSetting('lastDirectory')).toBeNull()
@@ -278,7 +279,7 @@ describe('Reset', () => {
     const defaults = createObjectBuilderSettings()
 
     expect(reset).toEqual(defaults)
-    expect(getSetting('language')).toBe('en_US')
+    expect(getSetting('language')).toBe('pt_BR')
     expect(getSetting('jpegQuality')).toBe(100)
     expect(getSetting('extended')).toBe(false)
   })
@@ -291,7 +292,7 @@ describe('Reset', () => {
     // Verify file was updated
     const content = await readFile(getSettingsPath(), 'utf-8')
     const parsed = JSON.parse(content) as ObjectBuilderSettings
-    expect(parsed.language).toBe('en_US')
+    expect(parsed.language).toBe('pt_BR')
   })
 })
 

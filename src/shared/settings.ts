@@ -40,6 +40,7 @@ export interface ObjectBuilderSettings {
   spritesContainerWidth: number
   showPreviewPanel: boolean
   showThingsPanel: boolean
+  showEditorPanel: boolean
   showSpritesPanel: boolean
 
   // --- Sub-window geometry -------------------------------------------------
@@ -110,6 +111,7 @@ export function createObjectBuilderSettings(): ObjectBuilderSettings {
     spritesContainerWidth: 0,
     showPreviewPanel: true,
     showThingsPanel: true,
+    showEditorPanel: true,
     showSpritesPanel: true,
 
     findWindowWidth: 0,
@@ -139,7 +141,7 @@ export function createObjectBuilderSettings(): ObjectBuilderSettings {
     lastAttributeServer: 'tfs1.4',
     syncOtbOnAdd: true,
 
-    language: 'en_US',
+    language: 'pt_BR',
     showLogPanel: true,
 
     theme: 'system'

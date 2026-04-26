@@ -7,7 +7,13 @@
 import React from 'react'
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { render, screen, fireEvent, act, createEvent } from '@testing-library/react'
-import { ThingListPanel, getGridMetrics } from '../ThingListPanel'
+import {
+  ThingListPanel,
+  getThingListLoadingMessages,
+  getGridMetrics,
+  getShouldFlushVirtualScroll,
+  getVirtualOverscanRows
+} from '../ThingListPanel'
 import { resetAppStore, useAppStore, resetEditorStore, resetSpriteStore, useSpriteStore } from '../../../stores'
 import { compressPixels } from '../../../services/spr'
 import { clearEffectColorAnalysisCache } from '../../../hooks/effect-dominant-color'
@@ -190,6 +196,48 @@ describe('ThingListPanel', () => {
     it('increases the number of columns when the panel becomes very wide', () => {
       expect(getGridMetrics(280).columns).toBe(2)
       expect(getGridMetrics(1200).columns).toBeGreaterThan(6)
+    })
+
+    it('keeps at least two extra viewports rendered during fast virtual scrolling', () => {
+      expect(getVirtualOverscanRows(720, 96)).toBe(15)
+      expect(getVirtualOverscanRows(720, 40)).toBe(36)
+    })
+
+    it('detects large scroll jumps that must update the virtual window synchronously', () => {
+      expect(getShouldFlushVirtualScroll(1200, 520, 720)).toBe(true)
+      expect(getShouldFlushVirtualScroll(1200, 1050, 720)).toBe(false)
+    })
+
+    it('uses the global overlay only for initial loading and keeps page warmup local', () => {
+      expect(getThingListLoadingMessages('Loading page sprites...', null)).toEqual({
+        globalLabel: 'Loading page sprites...',
+        globalProgress: null,
+        globalNote: null,
+        localLabel: null
+      })
+
+      expect(
+        getThingListLoadingMessages('Filtering objects...', null, { done: 120, total: 240 }, 'Cached')
+      ).toEqual({
+        globalLabel: 'Filtering objects...',
+        globalProgress: { done: 120, total: 240 },
+        globalNote: 'Cached',
+        localLabel: null
+      })
+
+      expect(getThingListLoadingMessages('', { done: 57_000, total: 111_206 })).toEqual({
+        globalLabel: null,
+        globalProgress: null,
+        globalNote: null,
+        localLabel: 'Preparing page... 57000/111206'
+      })
+
+      expect(getThingListLoadingMessages('', null)).toEqual({
+        globalLabel: null,
+        globalProgress: null,
+        globalNote: null,
+        localLabel: null
+      })
     })
   })
 
@@ -493,8 +541,9 @@ describe('ThingListPanel', () => {
       vi.useRealTimers()
     })
 
-    it('shows a PXG loading overlay while applying a grid area filter', async () => {
+    it('reports PXG loading state while applying a grid area filter', async () => {
       vi.useFakeTimers()
+      const onLoadingStateChange = vi.fn()
       let resolveReadSprites: (value: { entries: Array<[number, Uint8Array]> }) => void = () => {}
       const readSprites = vi.fn(
         () =>
@@ -524,21 +573,80 @@ describe('ThingListPanel', () => {
         things: { items, outfits: [], effects: [], missiles: [] }
       })
 
-      render(<ThingListPanel />)
+      render(<ThingListPanel onLoadingStateChange={onLoadingStateChange} />)
       fireEvent.change(screen.getByTestId('grid-area-filter'), { target: { value: '4' } })
       await act(async () => {
         vi.advanceTimersByTime(0)
       })
 
-      expect(screen.getByTestId('thing-filter-loading-overlay')).toBeInTheDocument()
+      expect(onLoadingStateChange).toHaveBeenCalledWith({
+        active: true,
+        label: 'Loading page sprites...'
+      })
 
       await act(async () => {
         resolveReadSprites({ entries: [[1, compressPixels(makePixels(255, 255, 255), false)]] })
         await Promise.resolve()
-        vi.runOnlyPendingTimers()
+        vi.runAllTimers()
+        await Promise.resolve()
       })
 
-      expect(screen.queryByTestId('thing-filter-loading-overlay')).not.toBeInTheDocument()
+      vi.useRealTimers()
+    })
+
+    it('reports PXG loading state while changing to another page', async () => {
+      vi.useFakeTimers()
+      const onLoadingStateChange = vi.fn()
+      let resolveReadSprites: (value: { entries: Array<[number, Uint8Array]> }) => void = () => {}
+      const readSprites = vi.fn(
+        () =>
+          new Promise<{ entries: Array<[number, Uint8Array]> }>((resolve) => {
+            resolveReadSprites = resolve
+          })
+      )
+      loadFileBackedSpriteSource(readSprites)
+
+      const items = Array.from({ length: 6 }, (_, index) =>
+        setMainFrameGroupSize(makeThing(100 + index, ThingCategory.ITEM), 1, 1)
+      )
+      const clientInfo = createClientInfo()
+      clientInfo.minItemId = 100
+      clientInfo.maxItemId = 105
+      useAppStore.setState({
+        project: {
+          loaded: true,
+          isTemporary: false,
+          changed: false,
+          fileName: 'test.dat',
+          datFilePath: '/test.dat',
+          sprFilePath: '/test.spr'
+        },
+        clientInfo,
+        things: { items, outfits: [], effects: [], missiles: [] }
+      })
+
+      render(<ThingListPanel pageSize={2} onLoadingStateChange={onLoadingStateChange} />)
+
+      await act(async () => {
+        vi.advanceTimersByTime(0)
+      })
+
+      fireEvent.click(screen.getByTestId('page-next-page'))
+
+      expect(onLoadingStateChange).toHaveBeenCalledWith({
+        active: true,
+        label: 'Loading page sprites...'
+      })
+
+      await act(async () => {
+        resolveReadSprites({ entries: [[1, compressPixels(makePixels(255, 255, 255), false)]] })
+        await Promise.resolve()
+        vi.runAllTimers()
+        await Promise.resolve()
+      })
+
+      expect(screen.getByTestId('thing-grid-item-102')).toBeInTheDocument()
+      expect(screen.getByTestId('thing-grid-item-103')).toBeInTheDocument()
       vi.useRealTimers()
     })
 
@@ -727,42 +835,171 @@ describe('ThingListPanel', () => {
 
     it('waits for file-backed PXG sprites before applying effect color filtering', async () => {
       vi.useFakeTimers()
-      let resolveReadSprites: (value: { entries: Array<[number, Uint8Array]> }) => void = () => {}
+      const onLoadingStateChange = vi.fn()
+      const pendingReadResolvers: Array<
+        (value: { entries: Array<[number, Uint8Array]> }) => void
+      > = []
       const readSprites = vi.fn(
         () =>
           new Promise<{ entries: Array<[number, Uint8Array]> }>((resolve) => {
-            resolveReadSprites = resolve
+            pendingReadResolvers.push(resolve)
           })
       )
       loadFileBackedSpriteSource(readSprites)
       loadProjectWithEffects([makeEffect(1, 1, 'Fire Burst'), makeEffect(2, 2, 'Ice Wave')])
 
-      render(<ThingListPanel />)
+      render(<ThingListPanel onLoadingStateChange={onLoadingStateChange} />)
       fireEvent.change(screen.getByTestId('effect-color-filter'), { target: { value: 'blue' } })
       await act(async () => {
         vi.advanceTimersByTime(0)
       })
 
-      expect(screen.getByTestId('thing-filter-loading-overlay')).toHaveTextContent(
-        'Filtering objects...'
+      expect(onLoadingStateChange).toHaveBeenCalledWith(
+        expect.objectContaining({
+          active: true,
+          label: 'Filtering objects...',
+          progress: { done: 0, total: 2 },
+          note: 'This runs once and stays cached afterwards.'
+        })
       )
 
       await act(async () => {
-        resolveReadSprites({
-          entries: [
-            [1, compressPixels(makePixels(255, 0, 0), false)],
-            [2, compressPixels(makePixels(0, 64, 255), false)]
-          ]
-        })
+        for (const resolve of pendingReadResolvers.splice(0)) {
+          resolve({
+            entries: [
+              [1, compressPixels(makePixels(255, 0, 0), false)],
+              [2, compressPixels(makePixels(0, 64, 255), false)]
+            ]
+          })
+        }
         await Promise.resolve()
-        vi.runOnlyPendingTimers()
+        vi.runAllTimers()
+        await Promise.resolve()
+        vi.runAllTimers()
+        await Promise.resolve()
       })
 
-      expect(screen.queryByTestId('thing-grid-item-1')).not.toBeInTheDocument()
-      expect(screen.getByTestId('thing-grid-item-2')).toBeInTheDocument()
-      expect(screen.queryByTestId('thing-filter-loading-overlay')).not.toBeInTheDocument()
+      expect(useSpriteStore.getState().areSpritesCached([1, 2])).toBe(true)
+      expect(onLoadingStateChange).toHaveBeenCalledWith({ active: false, label: '' })
       vi.useRealTimers()
     })
+
+    it('reuses cached effect analysis sprites when changing only the color bucket', async () => {
+      vi.useFakeTimers()
+      const onLoadingStateChange = vi.fn()
+      const readSprites = vi.fn().mockResolvedValue({
+        entries: [
+          [1, compressPixels(makePixels(255, 0, 0), false)],
+          [2, compressPixels(makePixels(0, 64, 255), false)]
+        ]
+      })
+
+      loadFileBackedSpriteSource(readSprites)
+      loadProjectWithEffects([makeEffect(1, 1, 'Fire Burst'), makeEffect(2, 2, 'Ice Wave')])
+
+      render(<ThingListPanel onLoadingStateChange={onLoadingStateChange} />)
+
+      fireEvent.change(screen.getByTestId('effect-color-filter'), { target: { value: 'blue' } })
+
+      await act(async () => {
+        await Promise.resolve()
+        vi.runAllTimers()
+        await Promise.resolve()
+      })
+
+      const callsAfterFirstFilter = readSprites.mock.calls.length
+      onLoadingStateChange.mockClear()
+
+      fireEvent.change(screen.getByTestId('effect-color-filter'), { target: { value: 'red' } })
+
+      await act(async () => {
+        await Promise.resolve()
+        vi.runAllTimers()
+        await Promise.resolve()
+      })
+
+      expect(readSprites.mock.calls.length).toBe(callsAfterFirstFilter)
+      expect(onLoadingStateChange).not.toHaveBeenCalledWith(
+        expect.objectContaining({
+          active: true,
+          label: 'Filtering objects...'
+        })
+      )
+      expect(onLoadingStateChange).not.toHaveBeenCalledWith(
+        expect.objectContaining({
+          active: true,
+          label: 'Loading page sprites...'
+        })
+      )
+      expect(screen.getByTestId('thing-grid-item-1')).toBeInTheDocument()
+      expect(screen.queryByTestId('thing-grid-item-2')).not.toBeInTheDocument()
+      vi.useRealTimers()
+    })
+
+    it('does not reload a PXG effects page when switching preview frame mode', async () => {
+      vi.useFakeTimers()
+      const onLoadingStateChange = vi.fn()
+      const readSprites = vi.fn().mockResolvedValue({
+        entries: [
+          [1, compressPixels(makePixels(255, 0, 0), false)],
+          [2, compressPixels(makePixels(255, 255, 255, 32), false)]
+        ]
+      })
+
+      loadFileBackedSpriteSource(readSprites)
+      const effect = makeEffect(1, 1, 'Dual Frame Effect')
+      const frameGroup = effect.frameGroups[0]!
+      frameGroup.frames = 2
+      frameGroup.spriteIndex = [1, 2]
+      loadProjectWithEffects([effect])
+
+      const { rerender } = render(
+        <ThingListPanel
+          effectPreviewFrameMode="first"
+          onLoadingStateChange={onLoadingStateChange}
+        />
+      )
+
+      await act(async () => {
+        await Promise.resolve()
+        vi.runAllTimers()
+        await Promise.resolve()
+      })
+
+      const callsAfterInitialLoad = readSprites.mock.calls.length
+      onLoadingStateChange.mockClear()
+      readSprites.mockClear()
+
+      rerender(
+        <ThingListPanel
+          effectPreviewFrameMode="largest"
+          onLoadingStateChange={onLoadingStateChange}
+        />
+      )
+
+      await act(async () => {
+        await Promise.resolve()
+        vi.runAllTimers()
+        await Promise.resolve()
+      })
+
+      expect(callsAfterInitialLoad).toBeGreaterThan(0)
+      expect(readSprites).not.toHaveBeenCalled()
+      expect(onLoadingStateChange).not.toHaveBeenCalledWith(
+        expect.objectContaining({
+          active: true,
+          label: 'Loading page sprites...'
+        })
+      )
+      expect(onLoadingStateChange).not.toHaveBeenCalledWith(
+        expect.objectContaining({
+          active: true,
+          label: 'Preparing thumbnails...'
+        })
+      )
+      vi.useRealTimers()
+    })
+
   })
 
   // -----------------------------------------------------------------------

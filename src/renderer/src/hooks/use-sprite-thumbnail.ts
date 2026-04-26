@@ -244,6 +244,18 @@ export function warmThingThumbnailCache(
   return url
 }
 
+export function hasThingThumbnailCache(
+  thing: ThingType,
+  category: ThingCategory,
+  transparent: boolean,
+  effectPreviewFrameMode: EffectPreviewFrameMode = 'first'
+): boolean {
+  if (!thing.frameGroups?.length) return false
+
+  const cacheKey = getThingThumbnailCacheKey(thing, category, transparent, effectPreviewFrameMode)
+  return thumbnailCache.get(cacheKey) !== undefined
+}
+
 // ---------------------------------------------------------------------------
 // Hook
 // ---------------------------------------------------------------------------

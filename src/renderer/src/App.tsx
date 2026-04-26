@@ -57,7 +57,7 @@ import { Modal, DialogButton } from './components/Modal'
 import { SplitPane } from './components/SplitPane'
 import { StatusBar } from './components/StatusBar'
 import { LogPanel } from './components/LogPanel'
-import { ThingListPanel, type ThingListAction } from './features/things'
+import { ThingListPanel, type ThingListAction, type ThingListLoadingState } from './features/things'
 import { ThingTypeEditor } from './features/editor'
 import { SpritePanel } from './features/sprites'
 import { PreviewPanel } from './features/preview'
@@ -108,7 +108,7 @@ import {
   exportThingPlanToFiles,
   type ThingExportEntry
 } from './services/thing-export'
-import { collectThingSpriteIds, collectThingsSpriteIds } from './services/sprite-preload'
+import { collectThingSpriteIds } from './services/sprite-preload'
 import { buildRecoveryOpenResult } from './utils'
 import { materializeImportedThingData } from './services/thing-import/thing-import-service'
 import {
@@ -392,6 +392,22 @@ async function canvasToArrayBuffer(
 // App
 // ---------------------------------------------------------------------------
 
+function applyPersistedPanelVisibility(
+  settings: ObjectBuilderSettings,
+  ui: {
+    showEditorPanel: boolean
+    showSpritesPanel: boolean
+    showLogPanel: boolean
+  }
+): ObjectBuilderSettings {
+  return {
+    ...settings,
+    showEditorPanel: ui.showEditorPanel,
+    showSpritesPanel: ui.showSpritesPanel,
+    showLogPanel: ui.showLogPanel
+  }
+}
+
 export function App(): React.JSX.Element {
   const { t } = useTranslation()
   const ui = useAppStore(selectUI)
@@ -411,9 +427,14 @@ export function App(): React.JSX.Element {
   const [errorMessages, setErrorMessages] = useState<string[]>([])
   const [isLoading, setIsLoading] = useState(false)
   const [loadingLabel, setLoadingLabel] = useState('')
+  const [thingListLoadingState, setThingListLoadingState] = useState<ThingListLoadingState>({
+    active: false,
+    label: ''
+  })
   const [runtimeSettings, setRuntimeSettings] = useState<ObjectBuilderSettings>(
     createObjectBuilderSettings
   )
+  const settingsLoadedRef = useRef(false)
   const pendingCloseRef = useRef(false)
   const [recoveryInfo, setRecoveryInfo] = useState<RecoveryInfo | null>(null)
 
@@ -838,20 +859,7 @@ export function App(): React.JSX.Element {
             'info',
             `PXG SPR: ${loadResult.spriteSource.baseSpriteCount} base + ${loadResult.spriteSource.extraSpriteCount} extra sprite(s) (file-backed)`
           )
-
-          const effectSpriteIds = collectThingsSpriteIds(datResult.effects)
-          if (effectSpriteIds.length > 0) {
-            setLoadingLabel('Preloading effect sprites...')
-            await preloadFileBackedSpriteIds(
-              effectSpriteIds,
-              setLoadingLabel,
-              'Preloading effect sprites...'
-            )
-            addLog(
-              'info',
-              `PXG preload: ${effectSpriteIds.length} effect sprite reference(s) cached for color filtering`
-            )
-          }
+          addLog('info', 'PXG preload: opening now uses page-based sprite caching')
         } else {
           if (!loadResult.sprBuffer) {
             throw new Error('SPR buffer missing for non-PXG project')
@@ -1226,7 +1234,6 @@ export function App(): React.JSX.Element {
     }
 
     setRuntimeSettings(nextSettings)
-    clearThumbnailCache()
 
     if (window.api?.settings) {
       void window.api.settings.save(nextSettings).catch((error: unknown) => {
@@ -1883,6 +1890,11 @@ export function App(): React.JSX.Element {
     if (!window.api?.settings?.load) return
     window.api.settings.load().then((settings) => {
       setRuntimeSettings(settings)
+      useAppStore.getState().setUIState({
+        showEditorPanel: settings.showEditorPanel,
+        showSpritesPanel: settings.showSpritesPanel,
+        showLogPanel: settings.showLogPanel
+      })
       useEditorStore
         .getState()
         .setClipboardAction(settings.thingListClipboardAction as ClipboardAction)
@@ -1890,8 +1902,39 @@ export function App(): React.JSX.Element {
       if (settings.language && settings.language !== i18n.language) {
         i18n.changeLanguage(settings.language)
       }
+      settingsLoadedRef.current = true
     })
   }, [])
+
+  useEffect(() => {
+    if (!settingsLoadedRef.current || !window.api?.settings?.save) return
+
+    const nextSettings = applyPersistedPanelVisibility(runtimeSettings, {
+      showEditorPanel: ui.showEditorPanel,
+      showSpritesPanel: ui.showSpritesPanel,
+      showLogPanel: ui.showLogPanel
+    })
+
+    if (
+      nextSettings.showEditorPanel === runtimeSettings.showEditorPanel &&
+      nextSettings.showSpritesPanel === runtimeSettings.showSpritesPanel &&
+      nextSettings.showLogPanel === runtimeSettings.showLogPanel
+    ) {
+      return
+    }
+
+    setRuntimeSettings(nextSettings)
+    void window.api.settings.save(nextSettings).catch((error: unknown) => {
+      const message = error instanceof Error ? error.message : String(error)
+      addLog('error', `Failed to save panel visibility: ${message}`)
+    })
+  }, [
+    addLog,
+    runtimeSettings,
+    ui.showEditorPanel,
+    ui.showLogPanel,
+    ui.showSpritesPanel
+  ])
 
   const closeDialog = useCallback(() => setActiveDialog(null), [])
 
@@ -1918,6 +1961,7 @@ export function App(): React.JSX.Element {
                 onAction={handleThingListAction}
                 pageSize={runtimeSettings.objectsListAmount}
                 effectPreviewFrameMode={runtimeSettings.effectPreviewFrameMode}
+                onLoadingStateChange={setThingListLoadingState}
               />
             }
             center={<ThingTypeEditor />}
@@ -2130,11 +2174,41 @@ export function App(): React.JSX.Element {
       </Modal>
 
       {/* Loading overlay */}
-      {isLoading && (
+      {(isLoading || thingListLoadingState.active) && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
-          <div className="flex flex-col items-center gap-3 rounded-lg bg-bg-secondary p-6 shadow-xl border border-border">
+          <div className="flex min-w-[280px] max-w-[340px] flex-col items-center gap-3 rounded-lg border border-border bg-bg-secondary p-6 shadow-xl">
             <div className="h-8 w-8 animate-spin rounded-full border-2 border-text-muted border-t-accent" />
-            <span className="text-sm text-text-primary">{loadingLabel || 'Loading...'}</span>
+            <span className="text-sm text-text-primary">
+              {loadingLabel || thingListLoadingState.label || 'Loading...'}
+            </span>
+            {thingListLoadingState.progress && thingListLoadingState.progress.total > 0 && (
+              <div className="flex w-full flex-col gap-2">
+                <div className="h-1.5 w-full overflow-hidden rounded-full bg-bg-tertiary">
+                  <div
+                    className="h-full rounded-full bg-accent transition-[width] duration-150"
+                    style={{
+                      width: `${Math.max(
+                        0,
+                        Math.min(
+                          100,
+                          (thingListLoadingState.progress.done /
+                            thingListLoadingState.progress.total) *
+                            100
+                        )
+                      )}%`
+                    }}
+                  />
+                </div>
+                <span className="text-center text-xs text-text-secondary">
+                  {thingListLoadingState.progress.done}/{thingListLoadingState.progress.total}
+                </span>
+              </div>
+            )}
+            {thingListLoadingState.note && (
+              <span className="text-center text-[11px] leading-4 text-text-secondary">
+                {thingListLoadingState.note}
+              </span>
+            )}
           </div>
         </div>
       )}

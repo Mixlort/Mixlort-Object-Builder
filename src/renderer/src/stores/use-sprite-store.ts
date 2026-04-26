@@ -96,6 +96,7 @@ export interface SpriteStoreActions {
   loadFileBacked(source: SpriteSourceDescriptor): void
   clearSprites(): void
   ensureSpritesCached(ids: number[]): Promise<void>
+  areSpritesCached(ids: number[]): boolean
 
   // Individual sprite CRUD
   getSprite(id: number): Uint8Array | undefined
@@ -766,6 +767,23 @@ export const useSpriteStore = create<SpriteStoreState & SpriteStoreActions>()((s
     }
     resolveCompletedSpriteCacheWaiters(get)
     return promise
+  },
+
+  areSpritesCached(ids) {
+    const state = get()
+    const source = state.fileBackedSource
+    if (!source) return true
+
+    const seen = new Set<number>()
+    for (const id of ids) {
+      if (seen.has(id) || id < 1 || id > source.spriteCount) continue
+      seen.add(id)
+      if (!isSpriteCachedOrUnavailable(state, source, id)) {
+        return false
+      }
+    }
+
+    return true
   }
 }))
 

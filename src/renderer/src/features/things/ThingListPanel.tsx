@@ -14,6 +14,7 @@
  */
 
 import React, { useState, useRef, useCallback, useMemo, useEffect } from 'react'
+import { flushSync } from 'react-dom'
 import { workerService } from '../../workers/worker-service'
 import { compareFileNamesNaturally } from '../../utils'
 import { materializeImportedThingData } from '../../services/thing-import/thing-import-service'
@@ -54,7 +55,11 @@ import {
 import { useTranslation } from 'react-i18next'
 import { PaginationStepper } from '../../components/PaginationStepper'
 import { ThingContextMenu, type ThingContextAction } from './ThingContextMenu'
-import { useSpriteThumbnail, warmThingThumbnailCache } from '../../hooks/use-sprite-thumbnail'
+import {
+  hasThingThumbnailCache,
+  useSpriteThumbnail,
+  warmThingThumbnailCache
+} from '../../hooks/use-sprite-thumbnail'
 import {
   collectThingThumbnailSpriteIds,
   collectThingsSpriteIds,
@@ -83,9 +88,13 @@ const GRID_GAP = 4
 const GRID_PADDING = 4
 const GRID_FALLBACK_WIDTH = 220
 const GRID_THREE_COLUMN_MIN_CARD_WIDTH = 92
-const OVERSCAN = 5
+const MIN_OVERSCAN_ROWS = 5
+const OVERSCAN_VIEWPORT_MULTIPLIER = 2
+const FAST_SCROLL_SYNC_VIEWPORT_RATIO = 0.75
 const PAGE_PRELOAD_CHUNK_SIZE = 750
 const THUMBNAIL_WARM_CHUNK_SIZE = 75
+const EFFECT_ANALYSIS_CHUNK_SIZE = 2000
+const EFFECT_ANALYSIS_CACHE_NOTE = 'This runs once and stays cached afterwards.'
 
 /** Default page size matching legacy objectsListAmount setting */
 const DEFAULT_PAGE_SIZE = 100
@@ -113,6 +122,55 @@ function nextTask(): Promise<void> {
   })
 }
 
+type PagePrepareProgress = {
+  done: number
+  total: number
+}
+
+export interface ThingListLoadingState {
+  active: boolean
+  label: string
+  progress?: PagePrepareProgress
+  note?: string
+}
+
+export function getThingListLoadingMessages(
+  filterLoadingLabel: string,
+  pagePrepareProgress: PagePrepareProgress | null,
+  filterLoadingProgress: PagePrepareProgress | null = null,
+  filterLoadingNote: string | null = null
+): {
+  globalLabel: string | null
+  globalProgress: PagePrepareProgress | null
+  globalNote: string | null
+  localLabel: string | null
+} {
+  if (filterLoadingLabel) {
+    return {
+      globalLabel: filterLoadingLabel,
+      globalProgress: filterLoadingProgress,
+      globalNote: filterLoadingNote,
+      localLabel: null
+    }
+  }
+
+  if (pagePrepareProgress) {
+    return {
+      globalLabel: null,
+      globalProgress: null,
+      globalNote: null,
+      localLabel: `Preparing page... ${pagePrepareProgress.done}/${pagePrepareProgress.total}`
+    }
+  }
+
+  return {
+    globalLabel: null,
+    globalProgress: null,
+    globalNote: null,
+    localLabel: null
+  }
+}
+
 function warmThumbnails(
   things: ThingType[],
   category: ThingCategory,
@@ -126,6 +184,17 @@ function warmThumbnails(
       // Missing or malformed sprite data leaves the regular placeholder visible.
     }
   }
+}
+
+function areThumbnailsWarm(
+  things: ThingType[],
+  category: ThingCategory,
+  transparent: boolean,
+  effectPreviewFrameMode: EffectPreviewFrameMode
+): boolean {
+  return things.every((thing) =>
+    hasThingThumbnailCache(thing, category, transparent, effectPreviewFrameMode)
+  )
 }
 
 // Checkerboard CSS for sprite thumbnail background
@@ -237,6 +306,23 @@ export function getGridMetrics(containerWidth: number): GridMetrics {
   }
 }
 
+export function getVirtualOverscanRows(containerHeight: number, rowHeight: number): number {
+  if (containerHeight <= 0 || rowHeight <= 0) return MIN_OVERSCAN_ROWS
+  return Math.max(
+    MIN_OVERSCAN_ROWS,
+    Math.ceil((containerHeight / rowHeight) * OVERSCAN_VIEWPORT_MULTIPLIER)
+  )
+}
+
+export function getShouldFlushVirtualScroll(
+  previousScrollTop: number,
+  nextScrollTop: number,
+  containerHeight: number
+): boolean {
+  if (containerHeight <= 0) return false
+  return Math.abs(nextScrollTop - previousScrollTop) >= containerHeight * FAST_SCROLL_SYNC_VIEWPORT_RATIO
+}
+
 // ---------------------------------------------------------------------------
 // ActionButton (footer toolbar icon button)
 // ---------------------------------------------------------------------------
@@ -284,13 +370,15 @@ interface ThingListPanelProps {
   onAction?: (action: ThingListAction) => void
   pageSize?: number
   effectPreviewFrameMode?: EffectPreviewFrameMode
+  onLoadingStateChange?: (state: ThingListLoadingState) => void
 }
 
 export function ThingListPanel({
   onEditThing,
   onAction,
   pageSize = DEFAULT_PAGE_SIZE,
-  effectPreviewFrameMode = 'first'
+  effectPreviewFrameMode = 'first',
+  onLoadingStateChange
 }: ThingListPanelProps = {}): React.JSX.Element {
   const { t } = useTranslation()
   const [viewMode, setViewMode] = useState<ViewMode>('grid')
@@ -303,10 +391,9 @@ export function ThingListPanel({
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null)
   const [isDragOver, setIsDragOver] = useState(false)
   const [filterLoadingLabel, setFilterLoadingLabel] = useState('')
-  const [pagePrepareProgress, setPagePrepareProgress] = useState<{
-    done: number
-    total: number
-  } | null>(null)
+  const [filterLoadingProgress, setFilterLoadingProgress] = useState<PagePrepareProgress | null>(null)
+  const [filterLoadingNote, setFilterLoadingNote] = useState<string | null>(null)
+  const [pagePrepareProgress, setPagePrepareProgress] = useState<PagePrepareProgress | null>(null)
   const preloadTokenRef = useRef(0)
 
   // Debounced search filter (150ms delay for filtering, immediate input update)
@@ -323,9 +410,11 @@ export function ThingListPanel({
   const panelRef = useRef<HTMLDivElement>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
   const [scrollTop, setScrollTop] = useState(0)
+  const scrollTopRef = useRef(0)
   const [containerHeight, setContainerHeight] = useState(0)
   const [containerWidth, setContainerWidth] = useState(0)
   const syncScrollPosition = useCallback((nextScrollTop: number) => {
+    scrollTopRef.current = nextScrollTop
     setScrollTop(nextScrollTop)
     if (scrollRef.current) {
       scrollRef.current.scrollTop = nextScrollTop
@@ -453,21 +542,54 @@ export function ThingListPanel({
   useEffect(() => {
     if (!effectColorAnalysisKey) {
       setReadyEffectColorAnalysisKey('')
+      setFilterLoadingLabel('')
+      setFilterLoadingProgress(null)
+      setFilterLoadingNote(null)
+      return
+    }
+
+    const effectColorAnalysisIds = effectColorAnalysisKey
+      .split(',')
+      .map((id) => Number(id))
+      .filter((id) => Number.isInteger(id) && id > 0)
+
+    if (useSpriteStore.getState().areSpritesCached(effectColorAnalysisIds)) {
+      setReadyEffectColorAnalysisKey(effectColorAnalysisKey)
+      setFilterLoadingLabel('')
+      setFilterLoadingProgress(null)
+      setFilterLoadingNote(null)
       return
     }
 
     let cancelled = false
-    void useSpriteStore
-      .getState()
-      .ensureSpritesCached(
-        effectColorAnalysisKey
-          .split(',')
-          .map((id) => Number(id))
-          .filter((id) => Number.isInteger(id) && id > 0)
-      )
-      .then(() => {
-        if (!cancelled) setReadyEffectColorAnalysisKey(effectColorAnalysisKey)
-      })
+    void (async () => {
+      const spriteStore = useSpriteStore.getState()
+      setFilterLoadingLabel('Filtering objects...')
+      setFilterLoadingProgress({ done: 0, total: effectColorAnalysisIds.length })
+      setFilterLoadingNote(EFFECT_ANALYSIS_CACHE_NOTE)
+
+      for (
+        let start = 0;
+        start < effectColorAnalysisIds.length && !cancelled;
+        start += EFFECT_ANALYSIS_CHUNK_SIZE
+      ) {
+        const chunk = effectColorAnalysisIds.slice(start, start + EFFECT_ANALYSIS_CHUNK_SIZE)
+        await spriteStore.ensureSpritesCached(chunk)
+        if (cancelled) return
+        setFilterLoadingProgress({
+          done: Math.min(start + chunk.length, effectColorAnalysisIds.length),
+          total: effectColorAnalysisIds.length
+        })
+        await nextTask()
+      }
+
+      if (!cancelled) {
+        setReadyEffectColorAnalysisKey(effectColorAnalysisKey)
+        setFilterLoadingProgress(null)
+        setFilterLoadingNote(null)
+        setFilterLoadingLabel('')
+      }
+    })()
 
     return () => {
       cancelled = true
@@ -582,9 +704,22 @@ export function ThingListPanel({
 
   const handleScroll = useCallback(() => {
     if (scrollRef.current) {
-      setScrollTop(scrollRef.current.scrollTop)
+      const nextScrollTop = scrollRef.current.scrollTop
+      const shouldFlush = getShouldFlushVirtualScroll(
+        scrollTopRef.current,
+        nextScrollTop,
+        containerHeight
+      )
+      scrollTopRef.current = nextScrollTop
+      if (shouldFlush) {
+        flushSync(() => {
+          setScrollTop(nextScrollTop)
+        })
+      } else {
+        setScrollTop(nextScrollTop)
+      }
     }
-  }, [])
+  }, [containerHeight])
 
   useEffect(() => {
     const el = scrollRef.current
@@ -611,10 +746,11 @@ export function ThingListPanel({
 
     if (viewMode === 'list') {
       const totalHeight = count * LIST_ITEM_HEIGHT
-      const startIdx = Math.max(0, Math.floor(scrollTop / LIST_ITEM_HEIGHT) - OVERSCAN)
+      const overscanRows = getVirtualOverscanRows(containerHeight, LIST_ITEM_HEIGHT)
+      const startIdx = Math.max(0, Math.floor(scrollTop / LIST_ITEM_HEIGHT) - overscanRows)
       const endIdx = Math.min(
         count - 1,
-        Math.ceil((scrollTop + containerHeight) / LIST_ITEM_HEIGHT) + OVERSCAN
+        Math.ceil((scrollTop + containerHeight) / LIST_ITEM_HEIGHT) + overscanRows
       )
 
       const items: VirtualItem[] = []
@@ -633,10 +769,11 @@ export function ThingListPanel({
     const totalRows = Math.ceil(count / columns)
     const totalHeight =
       totalRows * cardHeight + Math.max(0, totalRows - 1) * GRID_GAP + GRID_PADDING * 2
-    const startRow = Math.max(0, Math.floor(scrollTop / rowHeight) - OVERSCAN)
+    const overscanRows = getVirtualOverscanRows(containerHeight, rowHeight)
+    const startRow = Math.max(0, Math.floor(scrollTop / rowHeight) - overscanRows)
     const endRow = Math.min(
       totalRows - 1,
-      Math.ceil((scrollTop + containerHeight) / rowHeight) + OVERSCAN
+      Math.ceil((scrollTop + containerHeight) / rowHeight) + overscanRows
     )
 
     const items: VirtualItem[] = []
@@ -726,6 +863,8 @@ export function ThingListPanel({
   useEffect(() => {
     if (!isFileBackedSpriteSource) {
       setFilterLoadingLabel('')
+      setFilterLoadingProgress(null)
+      setFilterLoadingNote(null)
       setPagePrepareProgress(null)
       return
     }
@@ -739,22 +878,33 @@ export function ThingListPanel({
       setPagePrepareProgress(null)
 
       if (!effectColorAnalysisReady) {
-        setFilterLoadingLabel('Filtering objects...')
         return
       }
 
       const visibleSpriteIds = parseSpriteIdsKey(visibleThumbnailSpriteIdsKeyRef.current)
-      setFilterLoadingLabel('Loading page sprites...')
-      await useSpriteStore.getState().ensureSpritesCached(visibleSpriteIds)
+      const spriteStore = useSpriteStore.getState()
+      const visibleSpritesReady = spriteStore.areSpritesCached(visibleSpriteIds)
+      if (!visibleSpritesReady) {
+        setFilterLoadingLabel('Loading page sprites...')
+        await spriteStore.ensureSpritesCached(visibleSpriteIds)
+      }
       if (!isCurrent()) return
 
-      setFilterLoadingLabel('Preparing thumbnails...')
-      warmThumbnails(
+      const visibleThumbnailsReady = areThumbnailsWarm(
         visibleThingsRef.current,
         currentCategory,
         transparentEnabled,
         effectPreviewFrameMode
       )
+      if (!visibleThumbnailsReady) {
+        setFilterLoadingLabel('Preparing thumbnails...')
+        warmThumbnails(
+          visibleThingsRef.current,
+          currentCategory,
+          transparentEnabled,
+          effectPreviewFrameMode
+        )
+      }
       if (!isCurrent()) return
 
       setFilterLoadingLabel('')
@@ -762,28 +912,55 @@ export function ThingListPanel({
       const pageSpriteIds = parseSpriteIdsKey(pageThumbnailSpriteIdsKey)
       if (pageSpriteIds.length === 0) return
 
-      setPagePrepareProgress({ done: 0, total: pageSpriteIds.length })
-      for (let start = 0; start < pageSpriteIds.length; start += PAGE_PRELOAD_CHUNK_SIZE) {
-        if (!isCurrent()) return
-        const chunk = pageSpriteIds.slice(start, start + PAGE_PRELOAD_CHUNK_SIZE)
-        await useSpriteStore.getState().ensureSpritesCached(chunk)
-        if (!isCurrent()) return
-        setPagePrepareProgress({
-          done: Math.min(start + chunk.length, pageSpriteIds.length),
-          total: pageSpriteIds.length
-        })
-        await nextTask()
+      const pageSpritesReady = spriteStore.areSpritesCached(pageSpriteIds)
+      if (!pageSpritesReady) {
+        setPagePrepareProgress({ done: 0, total: pageSpriteIds.length })
+        for (let start = 0; start < pageSpriteIds.length; start += PAGE_PRELOAD_CHUNK_SIZE) {
+          if (!isCurrent()) return
+          const chunk = pageSpriteIds.slice(start, start + PAGE_PRELOAD_CHUNK_SIZE)
+          await spriteStore.ensureSpritesCached(chunk)
+          if (!isCurrent()) return
+          setPagePrepareProgress({
+            done: Math.min(start + chunk.length, pageSpriteIds.length),
+            total: pageSpriteIds.length
+          })
+          await nextTask()
+        }
       }
 
-      for (let start = 0; start < pageThings.length; start += THUMBNAIL_WARM_CHUNK_SIZE) {
-        if (!isCurrent()) return
-        warmThumbnails(
-          pageThings.slice(start, start + THUMBNAIL_WARM_CHUNK_SIZE),
-          currentCategory,
-          transparentEnabled,
-          effectPreviewFrameMode
-        )
-        await nextTask()
+      const pageThumbnailsReady = areThumbnailsWarm(
+        pageThings,
+        currentCategory,
+        transparentEnabled,
+        effectPreviewFrameMode
+      )
+      if (!pageThumbnailsReady) {
+        const thumbnailTotal = pageThings.length
+        if (!pageSpritesReady) {
+          setPagePrepareProgress({ done: 0, total: thumbnailTotal })
+        }
+
+        for (let start = 0; start < pageThings.length; start += THUMBNAIL_WARM_CHUNK_SIZE) {
+          if (!isCurrent()) return
+          warmThumbnails(
+            pageThings.slice(start, start + THUMBNAIL_WARM_CHUNK_SIZE),
+            currentCategory,
+            transparentEnabled,
+            effectPreviewFrameMode
+          )
+          if (!pageSpritesReady) {
+            setPagePrepareProgress({
+              done: Math.min(start + THUMBNAIL_WARM_CHUNK_SIZE, thumbnailTotal),
+              total: thumbnailTotal
+            })
+          }
+          await nextTask()
+        }
+      }
+
+      if (pageSpritesReady && pageThumbnailsReady) {
+        setPagePrepareProgress(null)
+        return
       }
 
       if (isCurrent()) {
@@ -808,9 +985,54 @@ export function ThingListPanel({
   ])
 
   useEffect(() => {
+    if (!onLoadingStateChange) return
+
+    const { globalLabel, globalProgress, globalNote } = getThingListLoadingMessages(
+      filterLoadingLabel,
+      pagePrepareProgress,
+      filterLoadingProgress,
+      filterLoadingNote
+    )
+    if (globalLabel) {
+      onLoadingStateChange({
+        active: true,
+        label: globalLabel,
+        progress: globalProgress ?? undefined,
+        note: globalNote ?? undefined
+      })
+      return
+    }
+
+    onLoadingStateChange({ active: false, label: '' })
+  }, [
+    filterLoadingLabel,
+    filterLoadingNote,
+    filterLoadingProgress,
+    onLoadingStateChange,
+    pagePrepareProgress
+  ])
+
+  useEffect(() => {
+    return () => {
+      onLoadingStateChange?.({ active: false, label: '' })
+    }
+  }, [onLoadingStateChange])
+
+  useEffect(() => {
     if (!isFileBackedSpriteSource || !visibleThumbnailSpriteIdsKey) return
     void useSpriteStore.getState().ensureSpritesCached(parseSpriteIdsKey(visibleThumbnailSpriteIdsKey))
   }, [isFileBackedSpriteSource, visibleThumbnailSpriteIdsKey])
+
+  const { localLabel: localPagePrepareLabel } = useMemo(
+    () =>
+      getThingListLoadingMessages(
+        filterLoadingLabel,
+        pagePrepareProgress,
+        filterLoadingProgress,
+        filterLoadingNote
+      ),
+    [filterLoadingLabel, filterLoadingNote, filterLoadingProgress, pagePrepareProgress]
+  )
 
   // -------------------------------------------------------------------------
   // Selection handlers
@@ -1504,21 +1726,16 @@ export function ThingListPanel({
         onScroll={handleScroll}
         data-testid="thing-list-scroll"
       >
-        {filterLoadingLabel && (
-          <div
-            className="absolute inset-0 z-30 flex items-center justify-center bg-black/55"
-            data-testid="thing-filter-loading-overlay"
-          >
-            <div className="flex items-center gap-2 rounded border border-border bg-bg-primary/95 px-3 py-2 text-xs text-text-primary shadow">
-              <span className="h-3 w-3 animate-spin rounded-full border border-text-muted border-t-accent" />
-              <span>{filterLoadingLabel}</span>
-            </div>
+        {isFileBackedSpriteSource && localPagePrepareLabel && (
+          <div className="pointer-events-none absolute top-2 right-2 z-10 flex w-fit items-center gap-2 rounded border border-border bg-bg-primary/95 px-2 py-1 text-[10px] text-text-secondary shadow">
+            <span className="h-2 w-2 animate-pulse rounded-full bg-accent" />
+            <span>{localPagePrepareLabel}</span>
           </div>
         )}
         {isFileBackedSpriteSource &&
           spriteCacheLoading &&
           !filterLoadingLabel &&
-          !pagePrepareProgress && (
+          !localPagePrepareLabel && (
             <div className="pointer-events-none absolute top-2 right-2 z-10 flex w-fit items-center gap-2 rounded border border-border bg-bg-primary/95 px-2 py-1 text-[10px] text-text-secondary shadow">
               <span className="h-2 w-2 animate-pulse rounded-full bg-accent" />
               <span>
@@ -1527,17 +1744,6 @@ export function ThingListPanel({
               </span>
             </div>
           )}
-        {isFileBackedSpriteSource && pagePrepareProgress && !filterLoadingLabel && (
-          <div
-            className="pointer-events-none absolute top-2 right-2 z-10 flex w-fit items-center gap-2 rounded border border-border bg-bg-primary/95 px-2 py-1 text-[10px] text-text-secondary shadow"
-            data-testid="thing-page-preload-status"
-          >
-            <span className="h-2 w-2 animate-pulse rounded-full bg-accent" />
-            <span>
-              Preparing page... {pagePrepareProgress.done}/{pagePrepareProgress.total}
-            </span>
-          </div>
-        )}
         {!isLoaded ? (
           <div className="flex h-full items-center justify-center">
             <span className="text-xs text-text-secondary">No project loaded</span>

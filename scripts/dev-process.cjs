@@ -5,6 +5,10 @@ function getExitCodeForSignal(signal) {
   return 1
 }
 
+const FORCE_KILL_TIMEOUT_MS = 5000
+const CHILD_POLL_INTERVAL_MS = 1000
+const CHILD_EXIT_GRACE_MS = 1000
+
 function listPosixChildPids(pid) {
   try {
     const { execFileSync } = require('node:child_process')
@@ -74,21 +78,77 @@ function createDevProcessManager({
 }) {
   let child = null
   let shuttingDown = false
+  let forceKillTimer = null
+  let childPollTimer = null
+  let exitCodeOverride = null
+  let hasSeenDescendants = false
+  let descendantsMissingSince = null
 
   const exit = (code) => {
     processRef.exit(typeof code === 'number' ? code : 0)
   }
 
+  const clearForceKillTimer = () => {
+    if (!forceKillTimer) return
+    clearTimeout(forceKillTimer)
+    forceKillTimer = null
+  }
+
+  const clearChildPollTimer = () => {
+    if (!childPollTimer) return
+    clearInterval(childPollTimer)
+    childPollTimer = null
+  }
+
+  const shutdownForAppExit = () => {
+    if (shuttingDown) return
+    shuttingDown = true
+    exitCodeOverride = 0
+    terminateProcessTree({ child, platform, signal: 'SIGTERM', kill, spawn, listChildPids })
+
+    forceKillTimer = setTimeout(() => {
+      terminateProcessTree({ child, platform, signal: 'SIGKILL', kill, spawn, listChildPids })
+      exit(0)
+    }, FORCE_KILL_TIMEOUT_MS)
+    if (typeof forceKillTimer.unref === 'function') {
+      forceKillTimer.unref()
+    }
+  }
+
   const shutdown = (signal) => {
     if (shuttingDown) return
     shuttingDown = true
+    exitCodeOverride = getExitCodeForSignal(signal)
     terminateProcessTree({ child, platform, signal: 'SIGTERM', kill, spawn, listChildPids })
 
-    const fallback = setTimeout(() => {
-      exit(getExitCodeForSignal(signal))
-    }, 5000)
-    if (typeof fallback.unref === 'function') {
-      fallback.unref()
+    forceKillTimer = setTimeout(() => {
+      terminateProcessTree({ child, platform, signal: 'SIGKILL', kill, spawn, listChildPids })
+      exit(exitCodeOverride)
+    }, FORCE_KILL_TIMEOUT_MS)
+    if (typeof forceKillTimer.unref === 'function') {
+      forceKillTimer.unref()
+    }
+  }
+
+  const pollChildTree = () => {
+    if (shuttingDown || !child || !child.pid || platform === 'win32') return
+
+    const descendants = collectDescendantPids(child.pid, listChildPids || listPosixChildPids)
+    if (descendants.length > 0) {
+      hasSeenDescendants = true
+      descendantsMissingSince = null
+      return
+    }
+
+    if (!hasSeenDescendants) return
+
+    if (descendantsMissingSince === null) {
+      descendantsMissingSince = Date.now()
+      return
+    }
+
+    if (Date.now() - descendantsMissingSince >= CHILD_EXIT_GRACE_MS) {
+      shutdownForAppExit()
     }
   }
 
@@ -101,8 +161,17 @@ function createDevProcessManager({
         stdio: 'inherit'
       })
 
+      if (platform !== 'win32') {
+        childPollTimer = setInterval(pollChildTree, CHILD_POLL_INTERVAL_MS)
+        if (typeof childPollTimer.unref === 'function') {
+          childPollTimer.unref()
+        }
+      }
+
       child.on('close', (code) => {
-        exit(code)
+        clearForceKillTimer()
+        clearChildPollTimer()
+        exit(exitCodeOverride !== null ? exitCodeOverride : code)
       })
 
       processRef.once('SIGINT', () => shutdown('SIGINT'))

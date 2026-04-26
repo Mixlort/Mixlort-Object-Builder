@@ -5,7 +5,7 @@
  * Translations are loaded from JSON files in locales/ directory.
  *
  * Supported languages:
- * - en_US (English, default)
+ * - en_US (English)
  * - es_ES (Spanish)
  * - pt_BR (Portuguese - Brazil)
  *
@@ -38,7 +38,7 @@ export const SUPPORTED_LANGUAGES = [
 
 export type SupportedLanguage = (typeof SUPPORTED_LANGUAGES)[number]['code']
 
-export const DEFAULT_LANGUAGE: SupportedLanguage = 'en_US'
+export const DEFAULT_LANGUAGE: SupportedLanguage = 'pt_BR'
 
 // ---------------------------------------------------------------------------
 // i18next initialization

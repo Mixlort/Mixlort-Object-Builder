@@ -206,6 +206,38 @@ describe('use-sprite-store', () => {
       expect(useSpriteStore.getState().spriteCacheLoading).toBe(false)
       expect(useSpriteStore.getState().spriteCachePendingCount).toBe(0)
     })
+
+    it('reports when requested file-backed sprites are already cached', async () => {
+      const readSprites = vi.fn().mockResolvedValue({
+        entries: [[5, makePixels(0xee)]]
+      })
+      Object.defineProperty(window, 'api', {
+        configurable: true,
+        value: {
+          project: { readSprites }
+        }
+      })
+
+      useSpriteStore.getState().loadFileBacked({
+        kind: 'file-backed-pxg',
+        signature: 0x59e48e02,
+        spriteCount: 8,
+        extended: true,
+        sprFilePath: '/tmp/Tibia.spr',
+        sprxFilePath: '/tmp/Tibia.sprx',
+        baseSpriteCount: 4,
+        extraSpriteCount: 4,
+        baseAddressTableOffset: 8,
+        extraAddressTableOffset: 16
+      })
+
+      expect(useSpriteStore.getState().areSpritesCached([5])).toBe(false)
+
+      await useSpriteStore.getState().ensureSpritesCached([5])
+
+      expect(useSpriteStore.getState().areSpritesCached([5])).toBe(true)
+      expect(useSpriteStore.getState().areSpritesCached([5, 5, 99])).toBe(true)
+    })
   })
 
   describe('clearSprites', () => {
