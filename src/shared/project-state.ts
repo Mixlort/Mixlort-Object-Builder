@@ -173,6 +173,13 @@ export interface ProjectSprWritePlan {
   overrideData?: ArrayBuffer | null
   /** [spriteId, byteOffset, byteLength] entries into overrideData. */
   overrideIndex?: Array<[number, number, number]>
+  /**
+   * Alternative to overrideData for very large plans: a temp file holding the
+   * packed override bytes (referenced by overrideIndex). Streaming to a file in
+   * chunks avoids cloning ~1GB across the contextBridge (which fails). The main
+   * process reads it and deletes it after compiling.
+   */
+  overrideFilePath?: string | null
   deletedIds: number[]
 }
 

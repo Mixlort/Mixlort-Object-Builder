@@ -71,6 +71,25 @@ function getObdWorker(): WorkerManager {
   return obdWorker
 }
 
+// Pool of OBD workers for parallel decode of many files (bulk import). LZMA
+// decode is CPU-bound, so a single worker serializes it; a pool spreads the work
+// across cores.
+const OBD_POOL_SIZE = Math.max(2, Math.min(6, (navigator.hardwareConcurrency || 4) - 1))
+let obdWorkerPool: WorkerManager[] | null = null
+
+function getObdWorkerPool(): WorkerManager[] {
+  if (!obdWorkerPool || obdWorkerPool.some((w) => w.isTerminated)) {
+    obdWorkerPool = Array.from(
+      { length: OBD_POOL_SIZE },
+      () =>
+        new WorkerManager(
+          new Worker(new URL('./obd-worker.ts', import.meta.url), { type: 'module' })
+        )
+    )
+  }
+  return obdWorkerPool
+}
+
 // ---------------------------------------------------------------------------
 // Public API
 // ---------------------------------------------------------------------------
@@ -209,6 +228,38 @@ export const workerService = {
   ): Promise<ThingData> {
     const payload: DecodeObdPayload = { buffer, defaultDurations }
     return getObdWorker().request<ThingData>(OBD_WORKER_DECODE, payload, [buffer])
+  },
+
+  /**
+   * Decode many OBD files across a pool of workers (parallel LZMA decode).
+   * Results are returned in input order; a per-file decode failure yields an
+   * Error in that slot instead of rejecting the whole batch. Buffers are
+   * transferred (detached) to the workers.
+   */
+  async decodeObdParallel(
+    buffers: ArrayBuffer[],
+    defaultDurations?: Record<string, number>,
+    onProgress?: (done: number) => void
+  ): Promise<Array<ThingData | Error>> {
+    const pool = getObdWorkerPool()
+    const results: Array<ThingData | Error> = new Array(buffers.length)
+    let next = 0
+    let done = 0
+    const run = async (worker: WorkerManager): Promise<void> => {
+      for (;;) {
+        const i = next++
+        if (i >= buffers.length) return
+        try {
+          const payload: DecodeObdPayload = { buffer: buffers[i], defaultDurations }
+          results[i] = await worker.request<ThingData>(OBD_WORKER_DECODE, payload, [buffers[i]])
+        } catch (error) {
+          results[i] = error instanceof Error ? error : new Error(String(error))
+        }
+        onProgress?.(++done)
+      }
+    }
+    await Promise.all(pool.map((worker) => run(worker)))
+    return results
   },
 
   // -------------------------------------------------------------------------

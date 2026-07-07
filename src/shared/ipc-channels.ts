@@ -16,6 +16,7 @@ export const FILE_SHOW_DIRECTORY_DIALOG = 'file:showDirectoryDialog'
 export const FILE_READ_BINARY = 'file:readBinary'
 export const FILE_READ_BINARY_RANGE = 'file:readBinaryRange'
 export const FILE_WRITE_BINARY = 'file:writeBinary'
+export const FILE_APPEND_BINARY = 'file:appendBinary'
 export const FILE_READ_TEXT = 'file:readText'
 export const FILE_WRITE_TEXT = 'file:writeText'
 export const FILE_EXISTS = 'file:exists'
@@ -167,6 +168,7 @@ export const INVOKE_CHANNELS = [
   FILE_SHOW_SAVE_DIALOG,
   FILE_SHOW_DIRECTORY_DIALOG,
   FILE_READ_BINARY,
+  FILE_APPEND_BINARY,
   FILE_READ_BINARY_RANGE,
   FILE_WRITE_BINARY,
   FILE_READ_TEXT,

@@ -130,7 +130,8 @@ describe('IPC Channels', () => {
     expect(channels.INVOKE_CHANNELS).toContain(channels.MENU_GET_STATE)
 
     // Total: 56 invoke channels (file/project/settings/menu/logger/app/object viewer/recovery/updater)
-    expect(channels.INVOKE_CHANNELS).toHaveLength(56)
+    expect(channels.INVOKE_CHANNELS).toContain(channels.FILE_APPEND_BINARY)
+    expect(channels.INVOKE_CHANNELS).toHaveLength(57)
   })
 
   it('EVENT_CHANNELS contains all event channels', async () => {
@@ -262,7 +263,9 @@ vi.mock('electron', () => ({
     }),
     removeHandler: vi.fn((channel: string) => {
       registeredHandlers.delete(channel)
-    })
+    }),
+    on: vi.fn(),
+    removeAllListeners: vi.fn()
   },
   BrowserWindow: {
     getAllWindows: vi.fn(() => []),

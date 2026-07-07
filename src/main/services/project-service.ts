@@ -194,15 +194,18 @@ function sourceSpriteLength(source: SourceSprBytes, id: number): number {
   return length
 }
 
-function collectPlanOverrides(plan: ProjectSprWritePlan): Map<number, PlanOverride> {
+function collectPlanOverrides(
+  plan: ProjectSprWritePlan,
+  packedBytes?: Uint8Array
+): Map<number, PlanOverride> {
   const overrides = new Map<number, PlanOverride>()
 
   for (const [id, data] of plan.overrides) {
     overrides.set(id, { kind: 'bytes', data })
   }
 
-  if (plan.overrideData && plan.overrideIndex) {
-    const bytes = new Uint8Array(plan.overrideData)
+  const bytes = packedBytes ?? (plan.overrideData ? new Uint8Array(plan.overrideData) : null)
+  if (bytes && plan.overrideIndex) {
     for (const [id, offset, length] of plan.overrideIndex) {
       if (
         !Number.isSafeInteger(id) ||
@@ -242,7 +245,14 @@ async function writeSprFromPlanAtomic(
   validateSpriteCountFitsFormat(plan.spriteCount, plan.extended)
   const count = plan.spriteCount
   const headerSize = getSprHeaderSize(plan.extended)
-  const overrides = collectPlanOverrides(plan)
+  // Large plans stream their packed overrides to a temp file (see preload) to
+  // avoid cloning ~1GB across the contextBridge. Read it into memory, then delete.
+  let overrideFileBytes: Buffer | null = null
+  if (plan.overrideFilePath) {
+    overrideFileBytes = await readFile(plan.overrideFilePath)
+    await unlink(plan.overrideFilePath).catch(() => {})
+  }
+  const overrides = collectPlanOverrides(plan, overrideFileBytes ?? undefined)
   const deletedIds = new Set(plan.deletedIds)
 
   const hasSource = !!plan.sourceFilePath && (await fileExists(plan.sourceFilePath))
@@ -257,7 +267,12 @@ async function writeSprFromPlanAtomic(
   // Fast path: nothing sprite-related changed and the format/signature/count
   // match -> copy the source verbatim (or no-op when saving in place). Reads only
   // the source header (8 bytes), never the whole file.
-  if (hasSource && overrides.size === 0 && deletedIds.size === 0 && sourceExtended === plan.extended) {
+  if (
+    hasSource &&
+    overrides.size === 0 &&
+    deletedIds.size === 0 &&
+    sourceExtended === plan.extended
+  ) {
     const info = await readSprHeaderInfo(plan.sourceFilePath as string, sourceExtended)
     if (info.spriteCount === count && info.signature === plan.signature) {
       if (plan.sourceFilePath !== targetFilePath) {

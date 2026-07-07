@@ -1067,6 +1067,36 @@ export function App(): React.JSX.Element {
             )}ms`
           )
         }
+        // Very large override payloads (~1GB, e.g. after "optimize sprites")
+        // cannot be cloned across the contextBridge in one shot. Stream them to a
+        // temp file in 16MB chunks and pass the path; main reads and deletes it.
+        if (
+          sprWritePlan?.overrideData &&
+          sprWritePlan.overrideData.byteLength > 256 * 1024 * 1024
+        ) {
+          const overrideBytes = new Uint8Array(sprWritePlan.overrideData)
+          const overrideTempPath = `${params.sprFilePath}.ob-overrides-${Date.now()}.tmp`
+          const chunkSize = 16 * 1024 * 1024
+          const streamT0 = performance.now()
+          for (let offset = 0; offset < overrideBytes.byteLength; offset += chunkSize) {
+            const end = Math.min(offset + chunkSize, overrideBytes.byteLength)
+            const chunk = overrideBytes.slice(offset, end).buffer
+            if (offset === 0) {
+              await window.api.file.writeBinary(overrideTempPath, chunk)
+            } else {
+              await window.api.file.appendBinary(overrideTempPath, chunk)
+            }
+          }
+          sprWritePlan.overrideFilePath = overrideTempPath
+          sprWritePlan.overrideData = null
+          addLog(
+            'info',
+            `SPR overrides streamed to temp: ${(overrideBytes.byteLength / 1048576).toFixed(
+              0
+            )}MB in ${Math.round(performance.now() - streamT0)}ms`
+          )
+        }
+
         let sprBuffer: ArrayBuffer | null = null
         let maxSpriteId = sprWritePlan?.spriteCount ?? 0
 
@@ -1588,18 +1618,35 @@ export function App(): React.JSX.Element {
         const defaultDurations = getDefaultDurations(settings)
         const entries: Array<{ filePath: string; thingData: ThingData }> = []
 
+        let readMs = 0
+        let decodeMs = 0
+        const importReadT0 = performance.now()
         for (let index = 0; index < result.filePaths.length; index++) {
           const filePath = result.filePaths[index]
           setLoadingLabel(`Importing objects... ${index + 1}/${result.filePaths.length}`)
+          const rt = performance.now()
           const buffer = await window.api.file.readBinary(filePath)
+          readMs += performance.now() - rt
+          const dt = performance.now()
           const thingData = await workerService.decodeObd(
             new Uint8Array(buffer).buffer,
             defaultDurations
           )
+          decodeMs += performance.now() - dt
           entries.push({ filePath, thingData })
           setLoadingProgress({ done: index + 1, total: result.filePaths.length })
-          await new Promise((resolve) => setTimeout(resolve, 0))
+          // Yield periodically (not per file) to keep the UI responsive without
+          // paying a macrotask hop 1500+ times.
+          if ((index + 1) % 25 === 0) {
+            await new Promise((resolve) => setTimeout(resolve, 0))
+          }
         }
+        addLog(
+          'info',
+          `Import decode: ${result.filePaths.length} files in ${Math.round(
+            performance.now() - importReadT0
+          )}ms (read ${Math.round(readMs)}ms, decode ${Math.round(decodeMs)}ms)`
+        )
 
         let importedCount = 0
 

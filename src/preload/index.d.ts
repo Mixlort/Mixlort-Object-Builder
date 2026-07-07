@@ -86,6 +86,7 @@ export interface ElectronFileAPI {
   readBinaryRange(filePath: string, position: number, length: number): Promise<ArrayBuffer>
   /** Write an ArrayBuffer to a file */
   writeBinary(filePath: string, data: ArrayBuffer): Promise<void>
+  appendBinary(filePath: string, data: ArrayBuffer): Promise<void>
   /** Read a file as text string */
   readText(filePath: string, encoding?: string): Promise<string>
   /** Write a text string to a file */

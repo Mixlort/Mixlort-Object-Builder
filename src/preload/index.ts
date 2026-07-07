@@ -19,6 +19,7 @@ import {
   FILE_READ_BINARY,
   FILE_READ_BINARY_RANGE,
   FILE_WRITE_BINARY,
+  FILE_APPEND_BINARY,
   FILE_READ_TEXT,
   FILE_WRITE_TEXT,
   FILE_EXISTS,
@@ -133,6 +134,8 @@ const api = {
 
     writeBinary: (filePath: string, data: ArrayBuffer) =>
       ipcRenderer.invoke(FILE_WRITE_BINARY, filePath, data),
+    appendBinary: (filePath: string, data: ArrayBuffer) =>
+      ipcRenderer.invoke(FILE_APPEND_BINARY, filePath, data),
 
     readText: (filePath: string, encoding?: string) =>
       ipcRenderer.invoke(FILE_READ_TEXT, filePath, encoding),
@@ -220,7 +223,10 @@ const api = {
       serverItemsPath?: string | null
     }) => ipcRenderer.invoke(PROJECT_LOAD, params),
 
-    compile: (params: CompileProjectParams) => ipcRenderer.invoke(PROJECT_COMPILE, params),
+    // Large sprite overrides are streamed to a temp file (see App compile), so
+    // the params here are small enough for a normal invoke (structured clone).
+    compile: (params: CompileProjectParams): Promise<void> =>
+      ipcRenderer.invoke(PROJECT_COMPILE, params),
 
     loadMergeFiles: (params: {
       datFilePath: string

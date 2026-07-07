@@ -33,6 +33,7 @@ import {
   readBinaryFile,
   readBinaryRange,
   writeBinaryFile,
+  appendBinaryFile,
   readTextFile,
   writeTextFile,
   fileExists,
@@ -143,6 +144,13 @@ export function registerIpcHandlers(): void {
     channels.FILE_WRITE_BINARY,
     async (_event, filePath: string, data: ArrayBuffer) => {
       await writeBinaryFile(filePath, data)
+    }
+  )
+
+  ipcMain.handle(
+    channels.FILE_APPEND_BINARY,
+    async (_event, filePath: string, data: ArrayBuffer) => {
+      await appendBinaryFile(filePath, data)
     }
   )
 

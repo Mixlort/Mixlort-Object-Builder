@@ -223,6 +223,19 @@ export async function writeBinaryFile(filePath: string, data: ArrayBuffer): Prom
 }
 
 /**
+ * Appends binary data to a file (creates it if missing). Used to stream large
+ * payloads to disk in chunks without a single huge IPC/clone.
+ */
+export async function appendBinaryFile(filePath: string, data: ArrayBuffer): Promise<void> {
+  const handle = await open(filePath, 'a')
+  try {
+    await handle.writeFile(Buffer.from(data))
+  } finally {
+    await handle.close()
+  }
+}
+
+/**
  * Reads a text file as a string (async).
  */
 export async function readTextFile(

@@ -14,7 +14,13 @@ import {
   getShouldFlushVirtualScroll,
   getVirtualOverscanRows
 } from '../ThingListPanel'
-import { resetAppStore, useAppStore, resetEditorStore, resetSpriteStore, useSpriteStore } from '../../../stores'
+import {
+  resetAppStore,
+  useAppStore,
+  resetEditorStore,
+  resetSpriteStore,
+  useSpriteStore
+} from '../../../stores'
 import { compressPixels } from '../../../services/spr'
 import { clearEffectColorAnalysisCache } from '../../../hooks/effect-dominant-color'
 import { ThingCategory, createThingType, createClientInfo, createFrameGroup } from '../../../types'
@@ -24,7 +30,23 @@ const mockDecodeObd = vi.hoisted(() => vi.fn())
 
 vi.mock('../../../workers/worker-service', () => ({
   workerService: {
-    decodeObd: mockDecodeObd
+    decodeObd: mockDecodeObd,
+    decodeObdParallel: async (
+      buffers: ArrayBuffer[],
+      _durations?: Record<string, number>,
+      onProgress?: (done: number) => void
+    ) => {
+      const out: unknown[] = []
+      for (let i = 0; i < buffers.length; i++) {
+        try {
+          out.push(await mockDecodeObd(buffers[i]))
+        } catch (e) {
+          out.push(e instanceof Error ? e : new Error(String(e)))
+        }
+        onProgress?.(i + 1)
+      }
+      return out
+    }
   }
 }))
 
@@ -233,7 +255,9 @@ describe('ThingListPanel', () => {
     })
 
     it('uses the global overlay only for initial loading and keeps page warmup local', () => {
-      expect(getThingListLoadingMessages('Carregando sprites da página...', null, loadingLabels)).toEqual({
+      expect(
+        getThingListLoadingMessages('Carregando sprites da página...', null, loadingLabels)
+      ).toEqual({
         globalLabel: 'Carregando sprites da página...',
         globalProgress: null,
         globalNote: null,
@@ -255,7 +279,9 @@ describe('ThingListPanel', () => {
         localLabel: null
       })
 
-      expect(getThingListLoadingMessages('', { done: 57_000, total: 111_206 }, loadingLabels)).toEqual({
+      expect(
+        getThingListLoadingMessages('', { done: 57_000, total: 111_206 }, loadingLabels)
+      ).toEqual({
         globalLabel: null,
         globalProgress: null,
         globalNote: null,
@@ -709,14 +735,12 @@ describe('ThingListPanel', () => {
     })
 
     it('filters effects by one dominant color and restores all colors', () => {
-      useSpriteStore
-        .getState()
-        .loadSprites(
-          new Map([
-            [1, compressPixels(makePixels(255, 0, 0), false)],
-            [2, compressPixels(makePixels(0, 64, 255), false)]
-          ])
-        )
+      useSpriteStore.getState().loadSprites(
+        new Map([
+          [1, compressPixels(makePixels(255, 0, 0), false)],
+          [2, compressPixels(makePixels(0, 64, 255), false)]
+        ])
+      )
       loadProjectWithEffects([makeEffect(1, 1, 'Fire Burst'), makeEffect(2, 2, 'Ice Wave')])
       render(<ThingListPanel />)
 
@@ -732,43 +756,41 @@ describe('ThingListPanel', () => {
     })
 
     it('filters chromatic effects when the largest frame has stronger neutral glow', () => {
-      useSpriteStore
-        .getState()
-        .loadSprites(
-          new Map([
-            [
-              1,
-              compressPixels(
-                makeMixedPixels([
-                  { red: 240, green: 240, blue: 240, count: 80 },
-                  { red: 0, green: 96, blue: 255, count: 6 }
-                ]),
-                false
-              )
-            ],
-            [
-              2,
-              compressPixels(
-                makeMixedPixels([
-                  { red: 240, green: 240, blue: 240, count: 80 },
-                  { red: 255, green: 32, blue: 32, count: 6 }
-                ]),
-                false
-              )
-            ],
-            [
-              3,
-              compressPixels(
-                makeMixedPixels([
-                  { red: 240, green: 240, blue: 240, count: 80 },
-                  { red: 32, green: 220, blue: 32, count: 6 }
-                ]),
-                false
-              )
-            ],
-            [4, compressPixels(makePixels(220, 220, 220, 86), false)]
-          ])
-        )
+      useSpriteStore.getState().loadSprites(
+        new Map([
+          [
+            1,
+            compressPixels(
+              makeMixedPixels([
+                { red: 240, green: 240, blue: 240, count: 80 },
+                { red: 0, green: 96, blue: 255, count: 6 }
+              ]),
+              false
+            )
+          ],
+          [
+            2,
+            compressPixels(
+              makeMixedPixels([
+                { red: 240, green: 240, blue: 240, count: 80 },
+                { red: 255, green: 32, blue: 32, count: 6 }
+              ]),
+              false
+            )
+          ],
+          [
+            3,
+            compressPixels(
+              makeMixedPixels([
+                { red: 240, green: 240, blue: 240, count: 80 },
+                { red: 32, green: 220, blue: 32, count: 6 }
+              ]),
+              false
+            )
+          ],
+          [4, compressPixels(makePixels(220, 220, 220, 86), false)]
+        ])
+      )
       loadProjectWithEffects([
         makeEffect(1, 1, 'Blue Glow'),
         makeEffect(2, 2, 'Red Glow'),
@@ -803,14 +825,12 @@ describe('ThingListPanel', () => {
     })
 
     it('sorts effects by dominant color and then by ID within the same color', () => {
-      useSpriteStore
-        .getState()
-        .loadSprites(
-          new Map([
-            [1, compressPixels(makePixels(0, 64, 255), false)],
-            [2, compressPixels(makePixels(255, 0, 0), false)]
-          ])
-        )
+      useSpriteStore.getState().loadSprites(
+        new Map([
+          [1, compressPixels(makePixels(0, 64, 255), false)],
+          [2, compressPixels(makePixels(255, 0, 0), false)]
+        ])
+      )
       loadProjectWithEffects([
         makeEffect(4, 2, 'Fire Four'),
         makeEffect(3, 1, 'Ice Three'),
@@ -835,15 +855,13 @@ describe('ThingListPanel', () => {
 
     it('combines text search with the effect color filter', () => {
       vi.useFakeTimers()
-      useSpriteStore
-        .getState()
-        .loadSprites(
-          new Map([
-            [1, compressPixels(makePixels(255, 0, 0), false)],
-            [2, compressPixels(makePixels(0, 64, 255), false)],
-            [3, compressPixels(makePixels(0, 64, 255), false)]
-          ])
-        )
+      useSpriteStore.getState().loadSprites(
+        new Map([
+          [1, compressPixels(makePixels(255, 0, 0), false)],
+          [2, compressPixels(makePixels(0, 64, 255), false)],
+          [3, compressPixels(makePixels(0, 64, 255), false)]
+        ])
+      )
       loadProjectWithEffects([
         makeEffect(1, 1, 'Fire Burst'),
         makeEffect(2, 2, 'Ice Wave'),
@@ -866,9 +884,8 @@ describe('ThingListPanel', () => {
     it('waits for file-backed PXG sprites before applying effect color filtering', async () => {
       vi.useFakeTimers()
       const onLoadingStateChange = vi.fn()
-      const pendingReadResolvers: Array<
-        (value: { entries: Array<[number, Uint8Array]> }) => void
-      > = []
+      const pendingReadResolvers: Array<(value: { entries: Array<[number, Uint8Array]> }) => void> =
+        []
       const readSprites = vi.fn(
         () =>
           new Promise<{ entries: Array<[number, Uint8Array]> }>((resolve) => {
@@ -1136,7 +1153,6 @@ describe('ThingListPanel', () => {
       )
       vi.useRealTimers()
     })
-
   })
 
   // -----------------------------------------------------------------------
@@ -1377,7 +1393,6 @@ describe('ThingListPanel', () => {
       expect(useAppStore.getState().things.items).toHaveLength(4)
       expect(useAppStore.getState().getThingById(ThingCategory.ITEM, 104)).toBeUndefined()
     })
-
   })
 
   // -----------------------------------------------------------------------

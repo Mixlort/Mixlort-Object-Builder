@@ -188,11 +188,12 @@ process.on('unhandledRejection', (reason) => {
 // App lifecycle
 // ---------------------------------------------------------------------------
 
-// Ensure a single running instance. A second launch (e.g. the dev harness
-// respawning Electron after a renderer crash, or the user reopening the app)
-// must never open a second window onto the same project files: two instances
-// saving the same .dat/.spr race each other and corrupt them.
-if (!app.requestSingleInstanceLock()) {
+// Single-instance lock (all builds). A second launch — the app relaunching
+// itself, the user reopening, or the dev harness — must never open a second
+// window onto the same project files: two instances saving the same .dat/.spr
+// race each other and corrupt them.
+const isPrimaryInstance = app.requestSingleInstanceLock()
+if (!isPrimaryInstance) {
   app.quit()
 }
 
@@ -207,8 +208,8 @@ app.on('second-instance', () => {
 })
 
 app.whenReady().then(async () => {
-  // Secondary instance: the primary keeps the lock; bail before creating windows.
-  if (!app.hasSingleInstanceLock()) return
+  // Secondary instance (packaged): the primary keeps the lock; bail out.
+  if (!isPrimaryInstance) return
 
   initLogger()
   const compileRecovery = resolveCompileRecoveryOnStartup()

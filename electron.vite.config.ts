@@ -41,8 +41,13 @@ export default defineConfig({
       }
     },
     server: {
+      port: 5273,
+      strictPort: true,
       fs: {
-        allow: [resolve(__dirname, 'src/shared'), resolve(__dirname, 'node_modules')]
+        // Allow serving from the whole repo. index.html lives in src/renderer and
+        // shared code in src/shared; an explicit allow-list replaces vite's
+        // default root, so it must cover the renderer root too.
+        allow: [resolve(__dirname)]
       }
     },
     resolve: {

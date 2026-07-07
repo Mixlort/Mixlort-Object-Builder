@@ -2,7 +2,13 @@ import React from 'react'
 import { render, screen, fireEvent, waitFor, act } from '@testing-library/react'
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { App } from './App'
-import { resetAppStore, resetEditorStore, resetSpriteStore, useAppStore, useEditorStore } from './stores'
+import {
+  resetAppStore,
+  resetEditorStore,
+  resetSpriteStore,
+  useAppStore,
+  useEditorStore
+} from './stores'
 import * as spriteThumbnailModule from './hooks/use-sprite-thumbnail'
 import { createObjectBuilderSettings } from '../../shared/settings'
 import {
@@ -18,7 +24,23 @@ const mockDecodeObd = vi.hoisted(() => vi.fn())
 
 vi.mock('./workers/worker-service', () => ({
   workerService: {
-    decodeObd: mockDecodeObd
+    decodeObd: mockDecodeObd,
+    decodeObdParallel: async (
+      buffers: ArrayBuffer[],
+      _durations?: Record<string, number>,
+      onProgress?: (done: number) => void
+    ) => {
+      const out: unknown[] = []
+      for (let i = 0; i < buffers.length; i++) {
+        try {
+          out.push(await mockDecodeObd(buffers[i]))
+        } catch (e) {
+          out.push(e instanceof Error ? e : new Error(String(e)))
+        }
+        onProgress?.(i + 1)
+      }
+      return out
+    }
   }
 }))
 

@@ -14,6 +14,7 @@ const { appHandlers, appMock } = vi.hoisted(() => {
         handlers.set(event, handler)
       }),
       quit: vi.fn(),
+      isPackaged: true,
       requestSingleInstanceLock: vi.fn(() => true),
       hasSingleInstanceLock: vi.fn(() => true)
     }

@@ -291,16 +291,13 @@ export function getGridMetrics(containerWidth: number): GridMetrics {
   const maxColumns = Math.max(
     3,
     Math.floor(
-      (effectiveWidth - GRID_PADDING * 2 + GRID_GAP) /
-        (GRID_THREE_COLUMN_MIN_CARD_WIDTH + GRID_GAP)
+      (effectiveWidth - GRID_PADDING * 2 + GRID_GAP) / (GRID_THREE_COLUMN_MIN_CARD_WIDTH + GRID_GAP)
     )
   )
 
   for (let candidate = maxColumns; candidate >= 3; candidate--) {
     const estimatedCardWidth =
-      Math.floor(
-        (effectiveWidth - GRID_PADDING * 2 - GRID_GAP * (candidate - 1)) / candidate
-      ) - 4
+      Math.floor((effectiveWidth - GRID_PADDING * 2 - GRID_GAP * (candidate - 1)) / candidate) - 4
 
     if (estimatedCardWidth >= GRID_THREE_COLUMN_MIN_CARD_WIDTH) {
       columns = candidate
@@ -312,12 +309,14 @@ export function getGridMetrics(containerWidth: number): GridMetrics {
   const availableWidth = effectiveWidth - GRID_PADDING * 2 - totalGap
   const columnWidth = Math.max(72, Math.floor(availableWidth / columns))
   const cardWidth = columns === 2 ? Math.max(76, columnWidth) : Math.max(92, columnWidth)
-  const cardHeight = columns === 2
-    ? Math.max(68, Math.min(cardWidth - 10, 82))
-    : Math.max(84, Math.min(cardWidth - 8, 96))
-  const iconSize = columns === 2
-    ? Math.max(50, Math.min(cardWidth - 12, 60))
-    : Math.max(58, Math.min(cardWidth - 12, 70))
+  const cardHeight =
+    columns === 2
+      ? Math.max(68, Math.min(cardWidth - 10, 82))
+      : Math.max(84, Math.min(cardWidth - 8, 96))
+  const iconSize =
+    columns === 2
+      ? Math.max(50, Math.min(cardWidth - 12, 60))
+      : Math.max(58, Math.min(cardWidth - 12, 70))
 
   return {
     columns,
@@ -343,7 +342,9 @@ export function getShouldFlushVirtualScroll(
   containerHeight: number
 ): boolean {
   if (containerHeight <= 0) return false
-  return Math.abs(nextScrollTop - previousScrollTop) >= containerHeight * FAST_SCROLL_SYNC_VIEWPORT_RATIO
+  return (
+    Math.abs(nextScrollTop - previousScrollTop) >= containerHeight * FAST_SCROLL_SYNC_VIEWPORT_RATIO
+  )
 }
 
 // ---------------------------------------------------------------------------
@@ -424,7 +425,9 @@ export function ThingListPanel({
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null)
   const [isDragOver, setIsDragOver] = useState(false)
   const [filterLoadingLabel, setFilterLoadingLabel] = useState('')
-  const [filterLoadingProgress, setFilterLoadingProgress] = useState<PagePrepareProgress | null>(null)
+  const [filterLoadingProgress, setFilterLoadingProgress] = useState<PagePrepareProgress | null>(
+    null
+  )
   const [filterLoadingNote, setFilterLoadingNote] = useState<string | null>(null)
   const [pagePrepareProgress, setPagePrepareProgress] = useState<PagePrepareProgress | null>(null)
   const [dropImportLoadingLabel, setDropImportLoadingLabel] = useState('')
@@ -807,7 +810,8 @@ export function ThingListPanel({
     }
 
     // Grid mode
-    const { columns, cardWidth, cardHeight, columnWidth, rowHeight } = getGridMetrics(containerWidth)
+    const { columns, cardWidth, cardHeight, columnWidth, rowHeight } =
+      getGridMetrics(containerWidth)
     const totalRows = Math.ceil(count / columns)
     const totalHeight =
       totalRows * cardHeight + Math.max(0, totalRows - 1) * GRID_GAP + GRID_PADDING * 2
@@ -827,7 +831,10 @@ export function ThingListPanel({
             thing: pageThings[idx],
             index: idx,
             top: GRID_PADDING + row * rowHeight,
-            left: GRID_PADDING + col * (columnWidth + GRID_GAP) + Math.floor((columnWidth - cardWidth) / 2)
+            left:
+              GRID_PADDING +
+              col * (columnWidth + GRID_GAP) +
+              Math.floor((columnWidth - cardWidth) / 2)
           })
         }
       }
@@ -1078,7 +1085,9 @@ export function ThingListPanel({
 
   useEffect(() => {
     if (isUiLocked || !isFileBackedSpriteSource || !visibleThumbnailSpriteIdsKey) return
-    void useSpriteStore.getState().ensureSpritesCached(parseSpriteIdsKey(visibleThumbnailSpriteIdsKey))
+    void useSpriteStore
+      .getState()
+      .ensureSpritesCached(parseSpriteIdsKey(visibleThumbnailSpriteIdsKey))
   }, [isFileBackedSpriteSource, isUiLocked, visibleThumbnailSpriteIdsKey])
 
   const { localLabel: localPagePrepareLabel } = useMemo(
@@ -1090,7 +1099,13 @@ export function ThingListPanel({
         filterLoadingProgress,
         filterLoadingNote
       ),
-    [filterLoadingLabel, filterLoadingNote, filterLoadingProgress, loadingLabels, pagePrepareProgress]
+    [
+      filterLoadingLabel,
+      filterLoadingNote,
+      filterLoadingProgress,
+      loadingLabels,
+      pagePrepareProgress
+    ]
   )
 
   // -------------------------------------------------------------------------
@@ -1486,13 +1501,28 @@ export function ThingListPanel({
           return nextId
         }
 
+        // Phase A: read + decode every file in parallel across the OBD worker
+        // pool (LZMA decode is CPU-bound; a single worker serialized it).
+        const decodeT0 = performance.now()
+        const buffers = await Promise.all(obdFiles.map((file) => file.arrayBuffer()))
+        const decoded = await workerService.decodeObdParallel(buffers, undefined, (done) => {
+          setDropImportLoadingLabel(`${importLabel} ${done}/${obdFiles.length}`)
+          setDropImportLoadingProgress({ done, total: obdFiles.length })
+        })
+        appStore.addLog(
+          'info',
+          `Import decode: ${obdFiles.length} files in ${Math.round(performance.now() - decodeT0)}ms`
+        )
+
+        // Phase B: materialize sequentially (shared nextSpriteId + ordering).
+        const materializeT0 = performance.now()
         for (let index = 0; index < obdFiles.length; index++) {
           const file = obdFiles[index]
           const spriteEntryStart = spriteEntries.length
           const nextSpriteIdStart = nextSpriteId
           try {
-            const buffer = await file.arrayBuffer()
-            const thingData = await workerService.decodeObd(new Uint8Array(buffer).buffer)
+            const thingData = decoded[index]
+            if (thingData instanceof Error) throw thingData
             const imported = materializeImportedThingData({
               thingData,
               transparent: transparentEnabled,
@@ -1519,12 +1549,14 @@ export function ThingListPanel({
             nextSpriteId = nextSpriteIdStart
             const msg = err instanceof Error ? err.message : String(err)
             appStore.addLog('error', `Failed to import ${file.name}: ${msg}`)
-          } finally {
-            const done = index + 1
-            setDropImportLoadingLabel(`${importLabel} ${done}/${obdFiles.length}`)
-            setDropImportLoadingProgress({ done, total: obdFiles.length })
           }
         }
+        appStore.addLog(
+          'info',
+          `Import materialize: ${obdFiles.length} files in ${Math.round(
+            performance.now() - materializeT0
+          )}ms`
+        )
 
         if (spriteEntries.length > 0) {
           useSpriteStore.getState().replaceSprites(spriteEntries)
@@ -1656,7 +1688,8 @@ export function ThingListPanel({
               if (viewMode === 'list') {
                 itemTop = idxInPage * LIST_ITEM_HEIGHT
               } else {
-                itemTop = GRID_PADDING + Math.floor(idxInPage / gridMetrics.columns) * gridMetrics.rowHeight
+                itemTop =
+                  GRID_PADDING + Math.floor(idxInPage / gridMetrics.columns) * gridMetrics.rowHeight
               }
               const itemHeight = viewMode === 'list' ? LIST_ITEM_HEIGHT : gridMetrics.cardHeight
               const scrollBottom = scrollRef.current.scrollTop + containerHeight
