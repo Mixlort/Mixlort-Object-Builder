@@ -49,6 +49,53 @@ import { lzmaCompress, lzmaDecompress } from './lzma'
 
 export type DefaultDurationFn = (category: ThingCategory) => number
 
+const MAX_OBD_SPRITES = SPRITE_DEFAULT_DATA_SIZE
+
+function toExactArrayBuffer(bytes: Uint8Array): ArrayBuffer {
+  const buffer = new ArrayBuffer(bytes.byteLength)
+  new Uint8Array(buffer).set(bytes)
+  return buffer
+}
+
+function validateSpritePixelsLength(length: number): void {
+  if (length > SPRITE_DEFAULT_DATA_SIZE) {
+    throw new Error(
+      `Invalid sprite data length: expected at most ${SPRITE_DEFAULT_DATA_SIZE}, got ${length}`
+    )
+  }
+}
+
+function validateReadableBytes(reader: BinaryReader, length: number): void {
+  if (length > reader.bytesAvailable) {
+    throw new Error(
+      `Unexpected end of data: expected ${length} bytes, available ${reader.bytesAvailable}`
+    )
+  }
+}
+
+function validateFrameGroup(fg: FrameGroup): void {
+  const fields = [
+    ['width', fg.width],
+    ['height', fg.height],
+    ['layers', fg.layers],
+    ['patternX', fg.patternX],
+    ['patternY', fg.patternY],
+    ['patternZ', fg.patternZ],
+    ['frames', fg.frames]
+  ] as const
+
+  for (const [name, value] of fields) {
+    if (!Number.isInteger(value) || value < 1) {
+      throw new Error(`Invalid frame group ${name}: ${value}`)
+    }
+  }
+
+  const totalSprites = getFrameGroupTotalSprites(fg)
+  if (!Number.isSafeInteger(totalSprites) || totalSprites > MAX_OBD_SPRITES) {
+    throw new Error(`The Object Data has more than ${MAX_OBD_SPRITES} sprites.`)
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Public API: Encode
 // ---------------------------------------------------------------------------
@@ -75,7 +122,7 @@ export async function encodeObd(data: ThingData): Promise<ArrayBuffer> {
   }
 
   const compressed = await lzmaCompress(new Uint8Array(raw))
-  return compressed.buffer as ArrayBuffer
+  return toExactArrayBuffer(compressed)
 }
 
 // ---------------------------------------------------------------------------
@@ -93,7 +140,7 @@ export async function decodeObd(
   getDefaultDuration?: DefaultDurationFn
 ): Promise<ThingData> {
   const decompressed = await lzmaDecompress(new Uint8Array(buffer))
-  const reader = new BinaryReader(decompressed.buffer as ArrayBuffer)
+  const reader = new BinaryReader(toExactArrayBuffer(decompressed))
 
   // Read first uint16 to determine version
   const firstValue = reader.readUint16()
@@ -132,6 +179,7 @@ function encodeV1(data: ThingData): ArrayBuffer {
   const frameGroup = getThingFrameGroup(data.thing, FGT.DEFAULT)
   if (!frameGroup) throw new Error('V1 encode: missing DEFAULT frame group')
 
+  validateFrameGroup(frameGroup)
   writeFrameGroupLayout(writer, frameGroup)
 
   // Sprites
@@ -140,6 +188,7 @@ function encodeV1(data: ThingData): ArrayBuffer {
   for (let i = 0; i < totalSprites; i++) {
     const sprite = sprites[i]
     const pixels = sprite?.pixels
+    if (pixels) validateSpritePixelsLength(pixels.length)
     writer.writeUint32(sprite?.id ?? 0)
     writer.writeUint32(pixels?.length ?? 0)
     if (pixels && pixels.length > 0) {
@@ -174,6 +223,7 @@ function decodeV1(reader: BinaryReader, getDefaultDuration: DefaultDurationFn): 
 
   // Frame group layout
   const frameGroup = readFrameGroupLayout(reader)
+  validateFrameGroup(frameGroup)
 
   // Animation (V1: no explicit durations, use defaults)
   if (frameGroup.frames > 1) {
@@ -193,6 +243,8 @@ function decodeV1(reader: BinaryReader, getDefaultDuration: DefaultDurationFn): 
   for (let i = 0; i < totalSprites; i++) {
     const spriteId = reader.readUint32()
     const dataSize = reader.readUint32()
+    validateSpritePixelsLength(dataSize)
+    validateReadableBytes(reader, dataSize)
     const pixels = dataSize > 0 ? reader.readBytes(dataSize) : null
 
     frameGroup.spriteIndex[i] = spriteId
@@ -236,6 +288,7 @@ function encodeV2(data: ThingData): ArrayBuffer {
   const frameGroup = getThingFrameGroup(data.thing, FGT.DEFAULT)
   if (!frameGroup) throw new Error('V2 encode: missing DEFAULT frame group')
 
+  validateFrameGroup(frameGroup)
   writeFrameGroupLayout(writer, frameGroup)
   writeAnimationData(writer, frameGroup)
 
@@ -247,9 +300,14 @@ function encodeV2(data: ThingData): ArrayBuffer {
     writer.writeUint32(sprite?.id ?? 0)
     // V2: fixed size (4096 bytes), pad with zeros if needed
     const pixels = sprite?.pixels ?? new Uint8Array(SPRITE_DEFAULT_DATA_SIZE)
+    if (pixels.length > SPRITE_DEFAULT_DATA_SIZE) {
+      throw new Error(
+        `Invalid sprite data length: expected ${SPRITE_DEFAULT_DATA_SIZE}, got ${pixels.length}`
+      )
+    }
     const padded =
-      pixels.length >= SPRITE_DEFAULT_DATA_SIZE
-        ? pixels.subarray(0, SPRITE_DEFAULT_DATA_SIZE)
+      pixels.length === SPRITE_DEFAULT_DATA_SIZE
+        ? pixels
         : padToSize(pixels, SPRITE_DEFAULT_DATA_SIZE)
     writer.writeBytes(padded)
   }
@@ -279,6 +337,7 @@ function decodeV2(reader: BinaryReader): ThingData {
 
   // Frame group layout
   const frameGroup = readFrameGroupLayout(reader)
+  validateFrameGroup(frameGroup)
 
   // Animation data
   readAnimationData(reader, frameGroup)
@@ -290,6 +349,7 @@ function decodeV2(reader: BinaryReader): ThingData {
 
   for (let i = 0; i < totalSprites; i++) {
     const spriteId = reader.readUint32()
+    validateReadableBytes(reader, SPRITE_DEFAULT_DATA_SIZE)
     const pixels = reader.readBytes(SPRITE_DEFAULT_DATA_SIZE)
 
     frameGroup.spriteIndex[i] = spriteId
@@ -347,14 +407,17 @@ function encodeV3(data: ThingData): ArrayBuffer {
     const frameGroup = getThingFrameGroup(data.thing, groupType)
     if (!frameGroup) continue
 
+    validateFrameGroup(frameGroup)
     writeFrameGroupLayout(writer, frameGroup)
     writeAnimationData(writer, frameGroup)
 
     // Sprites (variable size with length prefix)
     const sprites = data.sprites.get(groupType) ?? []
-    for (let i = 0; i < sprites.length; i++) {
+    const totalSprites = getFrameGroupTotalSprites(frameGroup)
+    for (let i = 0; i < totalSprites; i++) {
       const sprite = sprites[i]
       const pixels = sprite?.pixels
+      if (pixels) validateSpritePixelsLength(pixels.length)
       writer.writeUint32(sprite?.id ?? 0)
       writer.writeUint32(pixels?.length ?? 0)
       if (pixels && pixels.length > 0) {
@@ -401,6 +464,7 @@ function decodeV3(reader: BinaryReader): ThingData {
 
     // Frame group layout
     const frameGroup = readFrameGroupLayout(reader)
+    validateFrameGroup(frameGroup)
 
     // Animation data
     readAnimationData(reader, frameGroup)
@@ -413,6 +477,8 @@ function decodeV3(reader: BinaryReader): ThingData {
     for (let i = 0; i < totalSprites; i++) {
       const spriteId = reader.readUint32()
       const dataSize = reader.readUint32()
+      validateSpritePixelsLength(dataSize)
+      validateReadableBytes(reader, dataSize)
       const pixels = dataSize > 0 ? reader.readBytes(dataSize) : null
 
       frameGroup.spriteIndex[i] = spriteId

@@ -359,6 +359,38 @@ describe('use-sprite-store', () => {
     })
   })
 
+  describe('addSprites', () => {
+    it('assigns sequential ids after the max existing id', () => {
+      useSpriteStore.getState().loadSprites(
+        makeSpritesMap([
+          [1, 0xaa],
+          [5, 0xbb]
+        ])
+      )
+      const ids = useSpriteStore
+        .getState()
+        .addSprites([makePixels(0xcc), makePixels(0xdd), makePixels(0xee)])
+      expect(ids).toEqual([6, 7, 8])
+      expect(useSpriteStore.getState().sprites.get(6)).toEqual(makePixels(0xcc))
+      expect(useSpriteStore.getState().sprites.get(8)).toEqual(makePixels(0xee))
+    })
+
+    it('returns an empty array without mutating state for an empty batch', () => {
+      const before = useSpriteStore.getState().sprites.size
+      const ids = useSpriteStore.getState().addSprites([])
+      expect(ids).toEqual([])
+      expect(useSpriteStore.getState().sprites.size).toBe(before)
+    })
+
+    it('marks every added sprite as changed', () => {
+      const ids = useSpriteStore.getState().addSprites([makePixels(0x11), makePixels(0x22)])
+      const changed = useSpriteStore.getState().changedSpriteIds
+      for (const id of ids) {
+        expect(changed).toContain(id)
+      }
+    })
+  })
+
   // =========================================================================
   // Batch operations
   // =========================================================================
@@ -1101,6 +1133,26 @@ describe('use-sprite-store', () => {
       useSpriteStore.getState().loadFromBuffer(buffer, false)
       useSpriteStore.getState().removeSprite(1)
       expect(useSpriteStore.getState().getSpriteCount()).toBe(2)
+    })
+  })
+
+  describe('getSpriteWritePlan', () => {
+    it('packs override sprite bytes instead of returning a large overrides list', () => {
+      const buffer = makeSprBuffer([[1, 0xaa]], false, 2)
+      useSpriteStore.getState().loadFromBuffer(buffer, false)
+      useSpriteStore.getState().setSprite(1, makePixels(0x11))
+      useSpriteStore.getState().setSprite(3, makePixels(0x33))
+
+      const plan = useSpriteStore.getState().getSpriteWritePlan('/tmp/Tibia.spr', 0x12345678, true)
+
+      expect(plan.overrides).toEqual([])
+      expect(plan.overrideIndex).toEqual([
+        [1, 0, 16],
+        [3, 16, 16]
+      ])
+      expect(new Uint8Array(plan.overrideData ?? new ArrayBuffer(0))).toEqual(
+        new Uint8Array([...makePixels(0x11), ...makePixels(0x33)])
+      )
     })
   })
 

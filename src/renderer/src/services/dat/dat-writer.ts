@@ -110,6 +110,17 @@ function normalizeSpriteIndex(frameGroup: FrameGroup): number[] {
   return spriteIndex
 }
 
+function validateSpriteIndexFitsFormat(spriteId: number, extended: boolean): void {
+  if (!Number.isSafeInteger(spriteId) || spriteId < 0) {
+    throw new Error(`Invalid sprite id in DAT: ${spriteId}.`)
+  }
+  if (!extended && spriteId > 0xffff) {
+    throw new Error(
+      `DAT references sprite ${spriteId}, but the classic non-extended format supports at most 65535. Enable extended sprites before saving.`
+    )
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Texture patterns (shared across all versions)
 // ---------------------------------------------------------------------------
@@ -170,6 +181,7 @@ function writeTexturePatterns(
 
     const spriteIndex = normalizeSpriteIndex(frameGroup)
     for (let i = 0; i < spriteIndex.length; i++) {
+      validateSpriteIndexFitsFormat(spriteIndex[i], extended)
       if (extended) {
         writer.writeUint32(spriteIndex[i])
       } else {

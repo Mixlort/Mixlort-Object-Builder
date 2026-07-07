@@ -13,6 +13,7 @@ export type {
   CreateProjectParams,
   LoadProjectParams,
   CompileProjectParams,
+  ProjectSprWritePlan,
   MergeProjectParams,
   SpriteSourceDescriptor,
   LoadProjectResult,

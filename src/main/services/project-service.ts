@@ -13,6 +13,8 @@
  */
 
 import { basename, dirname, join, extname } from 'path'
+import { open as openFile, rename, unlink, readFile, copyFile } from 'fs/promises'
+import type { FileHandle } from 'fs/promises'
 import {
   readBinaryFile,
   writeBinaryFile,
@@ -30,6 +32,7 @@ import type {
   LoadProjectParams,
   LoadProjectResult,
   CompileProjectParams,
+  ProjectSprWritePlan,
   MergeProjectParams,
   MergeProjectResult,
   ReadProjectSpritesResult,
@@ -46,6 +49,7 @@ import {
   clearCompileRecovery,
   restoreBackedUpFiles
 } from './recovery-service'
+import { writeLog } from './logger-service'
 
 // ---------------------------------------------------------------------------
 // Project Service
@@ -85,6 +89,293 @@ function readSpriteHeader(buffer: ArrayBuffer, extended: boolean): SpriteSourceD
     spriteCount,
     extended
   }
+}
+
+const SPR_HEADER_U16 = 6
+const SPR_HEADER_U32 = 8
+const SPR_ADDRESS_SIZE = 4
+const SPR_BLOCK_HEADER_SIZE = 5
+const MAX_COMPRESSED_SPRITE_SIZE = 0xffff
+const MAX_SPR_FILE_SIZE = 0xffffffff
+const SPR_RGB_HEADER = Buffer.from([0xff, 0x00, 0xff])
+// Buffered SPR write: flush the output in large chunks instead of one syscall
+// per sprite (a 700k+ sprite file otherwise takes minutes of tiny writes).
+const SPR_WRITE_CHUNK = 1 << 22 // 4 MB
+
+type PlanOverride =
+  | { kind: 'bytes'; data: Uint8Array }
+  | { kind: 'packed'; bytes: Uint8Array; offset: number; length: number }
+
+function getSprHeaderSize(extended: boolean): number {
+  return extended ? SPR_HEADER_U32 : SPR_HEADER_U16
+}
+
+function validateSpriteCountFitsFormat(spriteCount: number, extended: boolean): void {
+  if (!Number.isSafeInteger(spriteCount) || spriteCount < 0) {
+    throw new Error(`Invalid SPR sprite count: ${spriteCount}.`)
+  }
+  if (!extended && spriteCount > 0xfffe) {
+    throw new Error(
+      `SPR has ${spriteCount} sprites, but the classic non-extended format supports at most 65534. Enable extended sprites before saving.`
+    )
+  }
+}
+
+function validateSprFileSize(size: number): void {
+  if (!Number.isSafeInteger(size) || size > MAX_SPR_FILE_SIZE) {
+    throw new Error(`SPR file is too large: ${size} bytes exceeds uint32 offsets.`)
+  }
+}
+
+interface SourceSprBytes {
+  bytes: Buffer
+  spriteCount: number
+  headerSize: number
+}
+
+/**
+ * Reads the source SPR fully into memory once. All per-sprite lookups then hit
+ * the in-memory buffer (no per-sprite disk syscalls). For a 700k-sprite / 660MB
+ * file this is a single large read instead of millions of tiny positional reads.
+ */
+async function loadSourceSpr(sourceFilePath: string, extended: boolean): Promise<SourceSprBytes> {
+  const bytes = await readFile(sourceFilePath)
+  const headerSize = getSprHeaderSize(extended)
+  if (bytes.length < headerSize) {
+    throw new Error(`SPR file is truncated: ${sourceFilePath}`)
+  }
+  const spriteCount = extended ? bytes.readUInt32LE(4) : bytes.readUInt16LE(4)
+  const addressTableEnd = headerSize + spriteCount * SPR_ADDRESS_SIZE
+  if (addressTableEnd > bytes.length) {
+    throw new Error(`SPR address table is truncated: ${sourceFilePath}`)
+  }
+  return { bytes, spriteCount, headerSize }
+}
+
+/** Reads only the SPR header (signature + sprite count), no sprite data. */
+async function readSprHeaderInfo(
+  filePath: string,
+  extended: boolean
+): Promise<{ signature: number; spriteCount: number }> {
+  const headerSize = getSprHeaderSize(extended)
+  const handle = await openFile(filePath, 'r')
+  try {
+    const buffer = Buffer.alloc(headerSize)
+    const { bytesRead } = await handle.read(buffer, 0, headerSize, 0)
+    if (bytesRead < headerSize) {
+      throw new Error(`SPR file is truncated: ${filePath}`)
+    }
+    return {
+      signature: buffer.readUInt32LE(0),
+      spriteCount: extended ? buffer.readUInt32LE(4) : buffer.readUInt16LE(4)
+    }
+  } finally {
+    await handle.close()
+  }
+}
+
+function sourceSpriteAddress(source: SourceSprBytes, id: number): number {
+  if (id < 1 || id > source.spriteCount) return 0
+  const address = source.bytes.readUInt32LE(source.headerSize + (id - 1) * SPR_ADDRESS_SIZE)
+  if (address === 0) return 0
+  if (address + SPR_BLOCK_HEADER_SIZE > source.bytes.length) {
+    throw new Error(`SPR sprite ${id} points outside the source file.`)
+  }
+  return address
+}
+
+function sourceSpriteLength(source: SourceSprBytes, id: number): number {
+  const address = sourceSpriteAddress(source, id)
+  if (address === 0) return 0
+  const length = source.bytes.readUInt16LE(address + 3)
+  if (address + SPR_BLOCK_HEADER_SIZE + length > source.bytes.length) {
+    throw new Error(`SPR sprite ${id} data is truncated.`)
+  }
+  return length
+}
+
+function collectPlanOverrides(plan: ProjectSprWritePlan): Map<number, PlanOverride> {
+  const overrides = new Map<number, PlanOverride>()
+
+  for (const [id, data] of plan.overrides) {
+    overrides.set(id, { kind: 'bytes', data })
+  }
+
+  if (plan.overrideData && plan.overrideIndex) {
+    const bytes = new Uint8Array(plan.overrideData)
+    for (const [id, offset, length] of plan.overrideIndex) {
+      if (
+        !Number.isSafeInteger(id) ||
+        !Number.isSafeInteger(offset) ||
+        !Number.isSafeInteger(length) ||
+        id < 1 ||
+        offset < 0 ||
+        length < 0 ||
+        offset + length > bytes.byteLength
+      ) {
+        throw new Error(`Invalid packed SPR override entry for sprite ${id}.`)
+      }
+      overrides.set(id, { kind: 'packed', bytes, offset, length })
+    }
+  }
+
+  return overrides
+}
+
+function getPlanOverrideLength(override: PlanOverride | undefined): number {
+  if (!override) return 0
+  return override.kind === 'bytes' ? override.data.length : override.length
+}
+
+function getPlanOverrideData(override: PlanOverride | undefined): Uint8Array | undefined {
+  if (!override) return undefined
+  if (override.kind === 'bytes') return override.data
+  return override.bytes.subarray(override.offset, override.offset + override.length)
+}
+
+async function writeSprFromPlanAtomic(
+  targetFilePath: string,
+  plan: ProjectSprWritePlan,
+  sourceExtended: boolean
+): Promise<SpriteSourceDescriptor> {
+  const startedAt = Date.now()
+  validateSpriteCountFitsFormat(plan.spriteCount, plan.extended)
+  const count = plan.spriteCount
+  const headerSize = getSprHeaderSize(plan.extended)
+  const overrides = collectPlanOverrides(plan)
+  const deletedIds = new Set(plan.deletedIds)
+
+  const hasSource = !!plan.sourceFilePath && (await fileExists(plan.sourceFilePath))
+
+  const descriptor: SpriteSourceDescriptor = {
+    kind: 'buffer',
+    signature: plan.signature,
+    spriteCount: count,
+    extended: plan.extended
+  }
+
+  // Fast path: nothing sprite-related changed and the format/signature/count
+  // match -> copy the source verbatim (or no-op when saving in place). Reads only
+  // the source header (8 bytes), never the whole file.
+  if (hasSource && overrides.size === 0 && deletedIds.size === 0 && sourceExtended === plan.extended) {
+    const info = await readSprHeaderInfo(plan.sourceFilePath as string, sourceExtended)
+    if (info.spriteCount === count && info.signature === plan.signature) {
+      if (plan.sourceFilePath !== targetFilePath) {
+        await copyFile(plan.sourceFilePath as string, targetFilePath)
+      }
+      writeLog('info', `SPR save (copy): ${count} sprites in ${Date.now() - startedAt}ms`)
+      return descriptor
+    }
+  }
+
+  // Rewrite path: load the source fully into memory once (only when needed).
+  const source = hasSource
+    ? await loadSourceSpr(plan.sourceFilePath as string, sourceExtended)
+    : null
+
+  // Pass 1: compute the output layout. Source lookups are in-memory (sync).
+  const addresses = new Uint32Array(count)
+  const lengths = new Uint32Array(count + 1)
+  let totalSize = headerSize + count * SPR_ADDRESS_SIZE
+  validateSprFileSize(totalSize)
+
+  for (let id = 1; id <= count; id++) {
+    if (deletedIds.has(id)) continue
+
+    let length = 0
+    if (overrides.has(id)) {
+      length = getPlanOverrideLength(overrides.get(id))
+      if (length > MAX_COMPRESSED_SPRITE_SIZE) {
+        throw new Error(
+          `SPR sprite ${id} is too large: ${length} bytes exceeds ${MAX_COMPRESSED_SPRITE_SIZE}.`
+        )
+      }
+    } else if (source) {
+      length = sourceSpriteLength(source, id)
+    }
+
+    if (length > 0) {
+      addresses[id - 1] = totalSize
+      lengths[id] = length
+      totalSize += SPR_BLOCK_HEADER_SIZE + length
+      validateSprFileSize(totalSize)
+    }
+  }
+
+  // Pass 2: write to a temp file with a large buffered writer (one flush per
+  // SPR_WRITE_CHUNK, not two syscalls per sprite), then atomically rename.
+  const tempPath = `${targetFilePath}.${process.pid}.${Date.now()}.tmp`
+  let output: FileHandle | null = null
+  try {
+    output = await openFile(tempPath, 'w')
+
+    const header = Buffer.alloc(headerSize + count * SPR_ADDRESS_SIZE)
+    header.writeUInt32LE(plan.signature, 0)
+    if (plan.extended) {
+      header.writeUInt32LE(count, 4)
+    } else {
+      header.writeUInt16LE(count, 4)
+    }
+    for (let i = 0; i < count; i++) {
+      header.writeUInt32LE(addresses[i], headerSize + i * SPR_ADDRESS_SIZE)
+    }
+    await output.write(header, 0, header.length)
+
+    const chunk = Buffer.allocUnsafe(SPR_WRITE_CHUNK)
+    let used = 0
+    const flush = async (): Promise<void> => {
+      if (used > 0) {
+        await output!.write(chunk, 0, used)
+        used = 0
+      }
+    }
+
+    const blockHeader = Buffer.alloc(SPR_BLOCK_HEADER_SIZE)
+    SPR_RGB_HEADER.copy(blockHeader, 0)
+
+    for (let id = 1; id <= count; id++) {
+      if (addresses[id - 1] === 0 || lengths[id] === 0) continue
+      const length = lengths[id]
+
+      // One block is 5 + (<=0xffff) bytes, so it always fits after a flush.
+      if (used + SPR_BLOCK_HEADER_SIZE + length > chunk.length) {
+        await flush()
+      }
+
+      blockHeader.writeUInt16LE(length, 3)
+      blockHeader.copy(chunk, used)
+      used += SPR_BLOCK_HEADER_SIZE
+
+      if (overrides.has(id)) {
+        const data = getPlanOverrideData(overrides.get(id))
+        if (!data) continue
+        chunk.set(data.subarray(0, length), used)
+      } else {
+        const address = sourceSpriteAddress(source as SourceSprBytes, id)
+        const dataStart = address + SPR_BLOCK_HEADER_SIZE
+        ;(source as SourceSprBytes).bytes.copy(chunk, used, dataStart, dataStart + length)
+      }
+      used += length
+    }
+
+    await flush()
+    await output.sync()
+    await output.close()
+    output = null
+    await rename(tempPath, targetFilePath)
+  } catch (error) {
+    if (output) {
+      await output.close().catch(() => {})
+    }
+    await unlink(tempPath).catch(() => {})
+    throw error
+  }
+
+  writeLog(
+    'info',
+    `SPR save (rewrite): ${count} sprites, ${(totalSize / 1048576).toFixed(1)}MB, ${overrides.size} overrides in ${Date.now() - startedAt}ms`
+  )
+  return descriptor
 }
 
 /**
@@ -313,11 +604,33 @@ export async function compileProject(params: CompileProjectParams): Promise<void
   beginCompileRecovery(filesToBackup)
 
   try {
+    const compileStart = Date.now()
+    const targetSprExtended = params.features.extended || params.versionValue >= 960
+    const sourceSprExtended = state.features.extended || state.versionValue >= 960
+    let nextSpriteSource: SpriteSourceDescriptor
+    writeLog(
+      'info',
+      `Compile start: dat=${(params.datBuffer.byteLength / 1048576).toFixed(1)}MB, sprMode=${params.sprWritePlan ? 'plan' : 'buffer'}`
+    )
+
     // Write DAT file
+    const datStart = Date.now()
     await writeBinaryFile(params.datFilePath, params.datBuffer)
+    writeLog('info', `DAT written in ${Date.now() - datStart}ms`)
 
     // Write SPR file
-    await writeBinaryFile(params.sprFilePath, params.sprBuffer)
+    if (params.sprWritePlan) {
+      nextSpriteSource = await writeSprFromPlanAtomic(
+        params.sprFilePath,
+        params.sprWritePlan,
+        sourceSprExtended
+      )
+    } else if (params.sprBuffer) {
+      await writeBinaryFile(params.sprFilePath, params.sprBuffer)
+      nextSpriteSource = readSpriteHeader(params.sprBuffer, targetSprExtended)
+    } else {
+      throw new Error('Missing SPR data for compile operation.')
+    }
 
     // Write server items if provided
     if (params.serverItemsPath) {
@@ -337,6 +650,7 @@ export async function compileProject(params: CompileProjectParams): Promise<void
       await writeTextFile(otfiPath, params.otfiContent)
     }
 
+    writeLog('info', `Compile total: ${Date.now() - compileStart}ms`)
     markCompileRecoveryCompleted()
 
     // Update state with new file paths
@@ -346,13 +660,18 @@ export async function compileProject(params: CompileProjectParams): Promise<void
     state.isTemporary = false
     state.changed = false
     state.loadedFileName = basename(params.datFilePath)
-    state.spriteSource = readSpriteHeader(
-      params.sprBuffer,
-      params.features.extended || params.versionValue >= 960
-    )
+    state.spriteSource = nextSpriteSource
     state.pxgCompatibility = false
     state.readOnly = false
     state.pxgRuntimeMetadataPath = null
+
+    // Keep features/version in sync with what was just written to disk, so a
+    // subsequent in-place save parses the source SPR with the correct header
+    // width (sourceSprExtended above is derived from these fields).
+    state.versionValue = params.versionValue
+    const compiledFeatures = { ...params.features }
+    applyProjectVersionDefaults(compiledFeatures, params.versionValue)
+    state.features = compiledFeatures
 
     // Update watchers for new paths
     if (state.datFilePath) {
@@ -484,9 +803,7 @@ export function updateProjectFeatures(features: Partial<ProjectState['features']
  * Used when the user selects a client directory.
  * Equivalent to legacy ClientInfoLoader behavior.
  */
-export async function discoverClientFiles(
-  directoryPath: string
-): Promise<{
+export async function discoverClientFiles(directoryPath: string): Promise<{
   datFile: string | null
   sprFile: string | null
   sprxFile: string | null

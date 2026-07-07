@@ -1,6 +1,6 @@
 // @vitest-environment node
 
-import { describe, it, expect, beforeEach, afterEach } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { writeFile, mkdir, rm, readFile } from 'fs/promises'
 import { join } from 'path'
 import { tmpdir } from 'os'
@@ -28,6 +28,13 @@ import {
 } from '../../../shared/project-state'
 import type { ProjectFeatures } from '../../../shared/project-state'
 
+vi.mock('../logger-service', () => ({
+  writeLog: vi.fn(),
+  writeError: vi.fn(),
+  initLogger: vi.fn(),
+  closeLogger: vi.fn()
+}))
+
 // ---------------------------------------------------------------------------
 // Test helpers
 // ---------------------------------------------------------------------------
@@ -43,6 +50,77 @@ function makeFeatures(overrides?: Partial<ProjectFeatures>): ProjectFeatures {
     overrides?.metadataController ?? 'default',
     overrides?.attributeServer ?? 'tfs1.4'
   )
+}
+
+function writeTestSpr(
+  signature: number,
+  spriteCount: number,
+  sprites: Map<number, Uint8Array>,
+  extended: boolean
+): ArrayBuffer {
+  const headerSize = extended ? 8 : 6
+  const count = extended ? spriteCount : Math.min(spriteCount, 0xfffe)
+  const addresses = new Uint32Array(count)
+  let totalSize = headerSize + count * 4
+
+  for (let id = 1; id <= count; id++) {
+    const compressed = sprites.get(id)
+    if (!compressed || compressed.length === 0) continue
+    addresses[id - 1] = totalSize
+    totalSize += 5 + compressed.length
+  }
+
+  const buffer = new ArrayBuffer(totalSize)
+  const view = new DataView(buffer)
+  let position = 0
+  view.setUint32(position, signature, true)
+  position += 4
+  if (extended) {
+    view.setUint32(position, count, true)
+    position += 4
+  } else {
+    view.setUint16(position, count, true)
+    position += 2
+  }
+
+  for (let i = 0; i < count; i++) {
+    view.setUint32(position, addresses[i], true)
+    position += 4
+  }
+
+  for (let id = 1; id <= count; id++) {
+    const compressed = sprites.get(id)
+    if (!compressed || compressed.length === 0) continue
+    view.setUint8(position++, 0xff)
+    view.setUint8(position++, 0x00)
+    view.setUint8(position++, 0xff)
+    view.setUint16(position, compressed.length, true)
+    position += 2
+    new Uint8Array(buffer, position, compressed.length).set(compressed)
+    position += compressed.length
+  }
+
+  return buffer
+}
+
+function readTestSpr(
+  buffer: ArrayBuffer,
+  extended: boolean
+): { spriteCount: number; sprites: Map<number, Uint8Array> } {
+  const headerSize = extended ? 8 : 6
+  const view = new DataView(buffer)
+  const spriteCount = extended ? view.getUint32(4, true) : view.getUint16(4, true)
+  const sprites = new Map<number, Uint8Array>()
+
+  for (let id = 1; id <= spriteCount; id++) {
+    const address = view.getUint32(headerSize + (id - 1) * 4, true)
+    if (address === 0) continue
+    const length = view.getUint16(address + 3, true)
+    if (length === 0) continue
+    sprites.set(id, new Uint8Array(buffer.slice(address + 5, address + 5 + length)))
+  }
+
+  return { spriteCount, sprites }
 }
 
 beforeEach(async () => {
@@ -395,6 +473,174 @@ describe('compileProject', () => {
 
     const sprResult = await readFile(sprPath)
     expect(Array.from(sprResult)).toEqual([5, 6, 7, 8])
+  })
+
+  it('syncs project state version/features with the compiled output', async () => {
+    // Loaded as v1056; compile to v860 (non-extended). State must follow so a
+    // later in-place save parses the source SPR with the correct header width.
+    await compileProject({
+      datFilePath: datPath,
+      sprFilePath: sprPath,
+      datBuffer: new Uint8Array([1, 2, 3, 4]).buffer,
+      sprBuffer: new Uint8Array([5, 6, 7, 8]).buffer,
+      versionValue: 860,
+      datSignature: 0x4e119462,
+      sprSignature: 0x56c1d9fa,
+      features: makeFeatures({ extended: false })
+    })
+
+    const state = getProjectState()
+    expect(state.versionValue).toBe(860)
+    expect(state.features.extended).toBe(false)
+  })
+
+  it('should compile SPR from a streaming write plan', async () => {
+    const originalSprites = new Map<number, Uint8Array>([
+      [1, new Uint8Array([1, 1, 1])],
+      [2, new Uint8Array([2, 2, 2])]
+    ])
+    const originalSpr = writeTestSpr(0x56c1d9fa, 2, originalSprites, true)
+    await mkdir(join(testDir, 'output'), { recursive: true })
+    await writeFile(sprPath, Buffer.from(originalSpr))
+
+    const override = new Uint8Array([9, 9, 9])
+    const added = new Uint8Array([3, 3, 3])
+
+    await compileProject({
+      datFilePath: datPath,
+      sprFilePath: sprPath,
+      datBuffer: new Uint8Array([1, 2, 3, 4]).buffer,
+      versionValue: 1056,
+      datSignature: 0x4e119462,
+      sprSignature: 0x56c1d9fa,
+      features: makeFeatures(),
+      sprWritePlan: {
+        sourceFilePath: sprPath,
+        signature: 0x56c1d9fa,
+        spriteCount: 3,
+        extended: true,
+        overrides: [
+          [1, override],
+          [3, added]
+        ],
+        deletedIds: [2]
+      }
+    })
+
+    const written = await readFile(sprPath)
+    const result = readTestSpr(
+      written.buffer.slice(written.byteOffset, written.byteOffset + written.byteLength),
+      true
+    )
+
+    expect(result.sprites.get(1)).toEqual(override)
+    expect(result.sprites.has(2)).toBe(false)
+    expect(result.sprites.get(3)).toEqual(added)
+    expect(result.spriteCount).toBe(3)
+  })
+
+  it('fast-path copies the source SPR verbatim when nothing changed', async () => {
+    const originalSprites = new Map<number, Uint8Array>([
+      [1, new Uint8Array([1, 1, 1])],
+      [2, new Uint8Array([2, 2, 2])]
+    ])
+    const originalSpr = writeTestSpr(0x56c1d9fa, 2, originalSprites, true)
+    await mkdir(join(testDir, 'output'), { recursive: true })
+    await writeFile(sprPath, Buffer.from(originalSpr))
+    const targetPath = join(testDir, 'output', 'Tibia2.spr')
+
+    await compileProject({
+      datFilePath: datPath,
+      sprFilePath: targetPath,
+      datBuffer: new Uint8Array([1, 2, 3, 4]).buffer,
+      versionValue: 1056,
+      datSignature: 0x4e119462,
+      sprSignature: 0x56c1d9fa,
+      features: makeFeatures(),
+      sprWritePlan: {
+        sourceFilePath: sprPath,
+        signature: 0x56c1d9fa,
+        spriteCount: 2,
+        extended: true,
+        overrides: [],
+        deletedIds: []
+      }
+    })
+
+    const written = await readFile(targetPath)
+    expect(Array.from(written)).toEqual(Array.from(new Uint8Array(originalSpr)))
+  })
+
+  it('should compile SPR from a packed streaming write plan', async () => {
+    const originalSprites = new Map<number, Uint8Array>([
+      [1, new Uint8Array([1, 1, 1])],
+      [2, new Uint8Array([2, 2, 2])]
+    ])
+    const originalSpr = writeTestSpr(0x56c1d9fa, 2, originalSprites, true)
+    await mkdir(join(testDir, 'output'), { recursive: true })
+    await writeFile(sprPath, Buffer.from(originalSpr))
+
+    const override = new Uint8Array([9, 9, 9])
+    const added = new Uint8Array([3, 3, 3, 3])
+    const overrideData = new Uint8Array(override.length + added.length)
+    overrideData.set(override, 0)
+    overrideData.set(added, override.length)
+
+    await compileProject({
+      datFilePath: datPath,
+      sprFilePath: sprPath,
+      datBuffer: new Uint8Array([1, 2, 3, 4]).buffer,
+      versionValue: 1056,
+      datSignature: 0x4e119462,
+      sprSignature: 0x56c1d9fa,
+      features: makeFeatures(),
+      sprWritePlan: {
+        sourceFilePath: sprPath,
+        signature: 0x56c1d9fa,
+        spriteCount: 3,
+        extended: true,
+        overrides: [],
+        overrideIndex: [
+          [1, 0, override.length],
+          [3, override.length, added.length]
+        ],
+        overrideData: overrideData.buffer,
+        deletedIds: [2]
+      }
+    })
+
+    const written = await readFile(sprPath)
+    const result = readTestSpr(
+      written.buffer.slice(written.byteOffset, written.byteOffset + written.byteLength),
+      true
+    )
+
+    expect(result.sprites.get(1)).toEqual(override)
+    expect(result.sprites.has(2)).toBe(false)
+    expect(result.sprites.get(3)).toEqual(added)
+    expect(result.spriteCount).toBe(3)
+  })
+
+  it('should reject non-extended streaming SPR plans above 0xFFFE sprites', async () => {
+    await expect(
+      compileProject({
+        datFilePath: datPath,
+        sprFilePath: sprPath,
+        datBuffer: new Uint8Array([1, 2, 3, 4]).buffer,
+        versionValue: 860,
+        datSignature: 0x4e119462,
+        sprSignature: 0x56c1d9fa,
+        features: makeFeatures({ extended: false }),
+        sprWritePlan: {
+          sourceFilePath: sprPath,
+          signature: 0x56c1d9fa,
+          spriteCount: 0xffff,
+          extended: false,
+          overrides: [],
+          deletedIds: []
+        }
+      })
+    ).rejects.toThrow(/extended/i)
   })
 
   it('should write OTFI file alongside DAT', async () => {

@@ -377,4 +377,47 @@ describe('thing-export-service', () => {
     expect(writeBinary).toHaveBeenNthCalledWith(2, '/tmp/out/101.png', expect.any(ArrayBuffer))
     expect(writeText).not.toHaveBeenCalled()
   })
+
+  it('reports progress and yields between export batches', async () => {
+    const plan = createThingExportPlan({
+      category: ThingCategory.ITEM,
+      selectedThingIds: [100, 101, 102],
+      things: {
+        items: [
+          makeThing(100, ThingCategory.ITEM),
+          makeThing(101, ThingCategory.ITEM),
+          makeThing(102, ThingCategory.ITEM)
+        ],
+        outfits: [],
+        effects: [],
+        missiles: []
+      },
+      idFilterEnabled: false,
+      idFilterInput: ''
+    })
+
+    const writeBinary = vi.fn().mockResolvedValue(undefined)
+    const writeText = vi.fn().mockResolvedValue(undefined)
+    const encodeThing = vi.fn().mockResolvedValue(new Uint8Array([1, 2, 3]).buffer)
+    const onProgress = vi.fn()
+    const yieldBetweenBatches = vi.fn().mockResolvedValue(undefined)
+
+    await exportThingPlanToFiles({
+      plan,
+      directory: '/tmp/out',
+      fileNamePrefix: '',
+      format: ImageFormat.PNG,
+      encodeThing,
+      writeBinary,
+      writeText,
+      batchSize: 2,
+      onProgress,
+      yieldBetweenBatches
+    })
+
+    expect(onProgress).toHaveBeenNthCalledWith(1, { completed: 1, total: 3 })
+    expect(onProgress).toHaveBeenNthCalledWith(2, { completed: 2, total: 3 })
+    expect(onProgress).toHaveBeenNthCalledWith(3, { completed: 3, total: 3 })
+    expect(yieldBetweenBatches).toHaveBeenCalledTimes(1)
+  })
 })

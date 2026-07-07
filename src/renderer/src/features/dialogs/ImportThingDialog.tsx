@@ -33,7 +33,7 @@ export interface ImportThingEntry {
 }
 
 export interface ImportThingResult {
-  entries: ImportThingEntry[]
+  filePaths: string[]
   action: ImportAction
 }
 
@@ -82,19 +82,22 @@ export function ImportThingDialog({
 }: ImportThingDialogProps): React.JSX.Element {
   const { t } = useTranslation()
   const [fileLabel, setFileLabel] = useState('')
-  const [entries, setEntries] = useState<ImportThingEntry[]>([])
+  const [filePaths, setFilePaths] = useState<string[]>([])
+  const [previewEntry, setPreviewEntry] = useState<ImportThingEntry | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [action, setAction] = useState<ImportAction>('add')
 
-  const firstEntry = entries[0] ?? null
-  const countMismatch = action === 'replace' && replaceCount > 0 && entries.length !== replaceCount
+  const firstEntry = previewEntry
+  const countMismatch =
+    action === 'replace' && replaceCount > 0 && filePaths.length !== replaceCount
 
   // Reset state on open
   useEffect(() => {
     if (open) {
       setFileLabel('')
-      setEntries([])
+      setFilePaths([])
+      setPreviewEntry(null)
       setLoading(false)
       setError(null)
       setAction('add')
@@ -111,37 +114,37 @@ export function ImportThingDialog({
     if (result.canceled || result.filePaths.length === 0) return
 
     const selectedPaths = [...result.filePaths].sort(compareFileNamesNaturally)
-    setFileLabel(selectedPaths.length === 1 ? selectedPaths[0] : `${selectedPaths.length} file(s) selected`)
+    setFileLabel(
+      selectedPaths.length === 1 ? selectedPaths[0] : `${selectedPaths.length} file(s) selected`
+    )
+    setFilePaths(selectedPaths)
+    setPreviewEntry(null)
     setError(null)
     setLoading(true)
 
     try {
       const { workerService } = await import('../../workers/worker-service')
-      const loadedEntries: ImportThingEntry[] = []
-
-      for (const selectedPath of selectedPaths) {
-        const buffer = await window.api.file.readBinary(selectedPath)
-        const thingData = await workerService.decodeObd(new Uint8Array(buffer).buffer)
-        loadedEntries.push({ filePath: selectedPath, thingData })
-      }
-
-      setEntries(loadedEntries)
+      const previewPath = selectedPaths[0]
+      const buffer = await window.api.file.readBinary(previewPath)
+      const thingData = await workerService.decodeObd(new Uint8Array(buffer).buffer)
+      setPreviewEntry({ filePath: previewPath, thingData })
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Failed to read OBD file'
       setError(message)
-      setEntries([])
+      setFilePaths([])
+      setPreviewEntry(null)
     } finally {
       setLoading(false)
     }
   }, [])
 
   const handleConfirm = useCallback(() => {
-    if (entries.length === 0 || countMismatch) return
-    onConfirm({ entries, action })
+    if (filePaths.length === 0 || countMismatch) return
+    onConfirm({ filePaths, action })
     onClose()
-  }, [entries, countMismatch, action, onConfirm, onClose])
+  }, [filePaths, countMismatch, action, onConfirm, onClose])
 
-  const isValid = entries.length > 0 && !loading && !countMismatch
+  const isValid = filePaths.length > 0 && !loading && !countMismatch
 
   return (
     <Modal
@@ -176,13 +179,13 @@ export function ImportThingDialog({
 
           {error && <p className="text-xs text-error">{error}</p>}
 
-          {!loading && !error && entries.length === 0 && (
+          {!loading && !error && filePaths.length === 0 && (
             <p className="text-xs text-text-secondary">{t('labels.selectFileToPreview')}</p>
           )}
 
           {firstEntry && !loading && (
             <div className="flex flex-col gap-1">
-              <InfoRow label={t('labels.files')} value={entries.length} />
+              <InfoRow label={t('labels.files')} value={filePaths.length} />
               <InfoRow
                 label={t('labels.type')}
                 value={getCategoryLabel(firstEntry.thingData.thing.category)}

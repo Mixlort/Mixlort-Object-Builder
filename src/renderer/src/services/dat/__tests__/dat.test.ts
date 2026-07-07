@@ -444,6 +444,33 @@ describe('readDat properties', () => {
     expect(result.items[0].frameGroups[0]!.spriteIndex[0]).toBe(70000)
   })
 
+  it('rejects non-extended sprite indices above uint16 range', () => {
+    const features = createClientFeatures(false)
+    const version = 860
+
+    const item = createThingType()
+    item.id = 100
+    item.category = TC.ITEM
+
+    const fg = createFrameGroup()
+    fg.spriteIndex = [70000]
+    setThingFrameGroup(item, 0, fg)
+
+    const data = {
+      signature: 0,
+      maxItemId: 100,
+      maxOutfitId: 0,
+      maxEffectId: 0,
+      maxMissileId: 0,
+      items: [item],
+      outfits: [],
+      effects: [],
+      missiles: []
+    }
+
+    expect(() => writeDat(data, version, features)).toThrow(/extended/i)
+  })
+
   it('reads outfit frame groups with frameGroups feature', () => {
     const features = createClientFeatures(false, false, false, true) // frameGroups = true
     const version = 1056

@@ -158,11 +158,30 @@ export interface LoadProjectParams {
 }
 
 /** Parameters for compiling (saving) a project */
+export interface ProjectSprWritePlan {
+  sourceFilePath: string | null
+  signature: number
+  spriteCount: number
+  extended: boolean
+  /**
+   * Legacy override list. Kept for compatibility and small tests.
+   * Large renderer plans should prefer overrideData + overrideIndex to avoid
+   * IPC structured-clone overhead from thousands of Uint8Array objects.
+   */
+  overrides: Array<[number, Uint8Array]>
+  /** Packed override bytes referenced by overrideIndex. */
+  overrideData?: ArrayBuffer | null
+  /** [spriteId, byteOffset, byteLength] entries into overrideData. */
+  overrideIndex?: Array<[number, number, number]>
+  deletedIds: number[]
+}
+
 export interface CompileProjectParams {
   datFilePath: string
   sprFilePath: string
   datBuffer: ArrayBuffer
-  sprBuffer: ArrayBuffer
+  sprBuffer?: ArrayBuffer | null
+  sprWritePlan?: ProjectSprWritePlan | null
   versionValue: number
   datSignature: number
   sprSignature: number

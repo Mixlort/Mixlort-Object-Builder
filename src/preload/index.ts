@@ -10,6 +10,7 @@
  */
 
 import { contextBridge, ipcRenderer } from 'electron'
+import type { CompileProjectParams } from '../shared/ipc-types'
 import {
   // File service
   FILE_SHOW_OPEN_DIALOG,
@@ -219,27 +220,7 @@ const api = {
       serverItemsPath?: string | null
     }) => ipcRenderer.invoke(PROJECT_LOAD, params),
 
-    compile: (params: {
-      datFilePath: string
-      sprFilePath: string
-      datBuffer: ArrayBuffer
-      sprBuffer: ArrayBuffer
-      versionValue: number
-      datSignature: number
-      sprSignature: number
-      features: {
-        extended: boolean
-        transparency: boolean
-        improvedAnimations: boolean
-        frameGroups: boolean
-        metadataController: string
-        attributeServer: string | null
-      }
-      serverItemsPath?: string | null
-      otbBuffer?: ArrayBuffer | null
-      xmlContent?: string | null
-      otfiContent?: string | null
-    }) => ipcRenderer.invoke(PROJECT_COMPILE, params),
+    compile: (params: CompileProjectParams) => ipcRenderer.invoke(PROJECT_COMPILE, params),
 
     loadMergeFiles: (params: {
       datFilePath: string

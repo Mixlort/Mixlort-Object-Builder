@@ -6,7 +6,7 @@
 
 import React from 'react'
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
-import { render, screen, fireEvent, act, createEvent } from '@testing-library/react'
+import { render, screen, fireEvent, act, createEvent, waitFor } from '@testing-library/react'
 import {
   ThingListPanel,
   getThingListLoadingMessages,
@@ -18,7 +18,15 @@ import { resetAppStore, useAppStore, resetEditorStore, resetSpriteStore, useSpri
 import { compressPixels } from '../../../services/spr'
 import { clearEffectColorAnalysisCache } from '../../../hooks/effect-dominant-color'
 import { ThingCategory, createThingType, createClientInfo, createFrameGroup } from '../../../types'
-import type { ThingType } from '../../../types'
+import type { ThingType, ThingData } from '../../../types'
+
+const mockDecodeObd = vi.hoisted(() => vi.fn())
+
+vi.mock('../../../workers/worker-service', () => ({
+  workerService: {
+    decodeObd: mockDecodeObd
+  }
+}))
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -72,6 +80,17 @@ function makeEffect(id: number, spriteId: number, marketName = ''): ThingType {
   fg.spriteIndex = [spriteId]
   effect.frameGroups[0] = fg
   return effect
+}
+
+function makeEffectThingData(id = 1): ThingData {
+  const thing = makeEffect(id, 1)
+  return {
+    obdVersion: 3,
+    clientVersion: 1060,
+    thing,
+    sprites: new Map([[0, [{ id: 1, pixels: makePixels(255, 0, 0) }]]]),
+    xmlAttributes: null
+  }
 }
 
 function setMainFrameGroupSize(thing: ThingType, width: number, height: number): ThingType {
@@ -169,6 +188,7 @@ let getContextSpy: { mockRestore: () => void } | null = null
 let toDataUrlSpy: { mockRestore: () => void } | null = null
 
 beforeEach(() => {
+  mockDecodeObd.mockReset()
   resetAppStore()
   resetEditorStore()
   resetSpriteStore()
@@ -943,6 +963,113 @@ describe('ThingListPanel', () => {
       )
       expect(screen.getByTestId('thing-grid-item-1')).toBeInTheDocument()
       expect(screen.queryByTestId('thing-grid-item-2')).not.toBeInTheDocument()
+      vi.useRealTimers()
+    })
+
+    it('reports global loading progress while dropped OBD effects are imported', async () => {
+      const onLoadingStateChange = vi.fn()
+      let resolveDecode: (value: ThingData) => void = () => {}
+      mockDecodeObd.mockImplementation(
+        () =>
+          new Promise<ThingData>((resolve) => {
+            resolveDecode = resolve
+          })
+      )
+
+      loadProjectWithEffects([])
+      render(<ThingListPanel onLoadingStateChange={onLoadingStateChange} />)
+
+      fireEvent.drop(screen.getByTestId('thing-list-panel'), {
+        dataTransfer: {
+          files: [
+            {
+              name: 'effect_1.obd',
+              arrayBuffer: vi.fn().mockResolvedValue(new ArrayBuffer(1))
+            }
+          ]
+        }
+      })
+
+      await waitFor(() => {
+        expect(onLoadingStateChange).toHaveBeenCalledWith({
+          active: true,
+          label: 'Importando Objetos 0/1',
+          progress: { done: 0, total: 1 }
+        })
+      })
+
+      await act(async () => {
+        resolveDecode(makeEffectThingData(1))
+        await Promise.resolve()
+      })
+
+      await waitFor(() => {
+        expect(onLoadingStateChange).toHaveBeenCalledWith({ active: false, label: '' })
+      })
+      expect(useAppStore.getState().things.effects).toHaveLength(1)
+    })
+
+    it('defers dropped OBD effects until the full batch is decoded', async () => {
+      const resolvers: Array<(value: ThingData) => void> = []
+      mockDecodeObd.mockImplementation(
+        () =>
+          new Promise<ThingData>((resolve) => {
+            resolvers.push(resolve)
+          })
+      )
+
+      loadProjectWithEffects([])
+      render(<ThingListPanel />)
+
+      fireEvent.drop(screen.getByTestId('thing-list-panel'), {
+        dataTransfer: {
+          files: [
+            {
+              name: 'effect_1.obd',
+              arrayBuffer: vi.fn().mockResolvedValue(new ArrayBuffer(1))
+            },
+            {
+              name: 'effect_2.obd',
+              arrayBuffer: vi.fn().mockResolvedValue(new ArrayBuffer(1))
+            }
+          ]
+        }
+      })
+
+      await waitFor(() => expect(resolvers).toHaveLength(1))
+      await act(async () => {
+        resolvers[0](makeEffectThingData(1))
+        await Promise.resolve()
+      })
+
+      await waitFor(() => expect(resolvers).toHaveLength(2))
+      expect(useAppStore.getState().things.effects).toHaveLength(0)
+
+      await act(async () => {
+        resolvers[1](makeEffectThingData(2))
+        await Promise.resolve()
+      })
+
+      await waitFor(() => {
+        expect(useAppStore.getState().things.effects.map((thing) => thing.id)).toEqual([1, 2])
+      })
+    })
+
+    it('does not warm file-backed sprites while the UI is locked', async () => {
+      vi.useFakeTimers()
+      const readSprites = vi.fn().mockResolvedValue({ entries: [] })
+      loadFileBackedSpriteSource(readSprites)
+      loadProjectWithEffects([makeEffect(1, 1)])
+      useAppStore.getState().setLocked(true)
+
+      render(<ThingListPanel />)
+
+      await act(async () => {
+        vi.runAllTimers()
+        await Promise.resolve()
+      })
+
+      expect(readSprites).not.toHaveBeenCalled()
       vi.useRealTimers()
     })
 

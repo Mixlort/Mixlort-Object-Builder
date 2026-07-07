@@ -47,6 +47,9 @@ export interface ExportThingPlanParams {
   encodeThing: (entry: ThingExportEntry) => Promise<ArrayBuffer>
   writeBinary: (path: string, data: ArrayBuffer) => Promise<void>
   writeText: (path: string, text: string) => Promise<void>
+  batchSize?: number
+  onProgress?: (progress: { completed: number; total: number }) => void
+  yieldBetweenBatches?: () => Promise<void>
 }
 
 export interface ExportThingPlanResult {
@@ -204,26 +207,40 @@ export async function exportThingPlanToFiles(
     useOriginalIdsInFileNames = false,
     encodeThing,
     writeBinary,
-    writeText
+    writeText,
+    batchSize = plan.entries.length || 1,
+    onProgress,
+    yieldBetweenBatches
   } = params
 
   const extension = getExportExtension(format)
   const writtenFiles: string[] = []
   const useFilteredCategoryIdsInFileNames =
     plan.filterApplied && supportsCategoryIdFilter(plan.category)
+  const normalizedBatchSize = Math.max(1, batchSize)
+  let completed = 0
 
-  for (const entry of plan.entries) {
-    const fileName = getExportFileName(
-      entry,
-      extension,
-      fileNamePrefix,
-      useOriginalIdsInFileNames,
-      useFilteredCategoryIdsInFileNames
-    )
-    const fullPath = joinPath(directory, fileName)
-    const data = await encodeThing(entry)
-    await writeBinary(fullPath, data)
-    writtenFiles.push(fullPath)
+  for (let start = 0; start < plan.entries.length; start += normalizedBatchSize) {
+    const batch = plan.entries.slice(start, start + normalizedBatchSize)
+    for (const entry of batch) {
+      const fileName = getExportFileName(
+        entry,
+        extension,
+        fileNamePrefix,
+        useOriginalIdsInFileNames,
+        useFilteredCategoryIdsInFileNames
+      )
+      const fullPath = joinPath(directory, fileName)
+      const data = await encodeThing(entry)
+      await writeBinary(fullPath, data)
+      writtenFiles.push(fullPath)
+      completed++
+      onProgress?.({ completed, total: plan.entries.length })
+    }
+
+    if (yieldBetweenBatches && start + normalizedBatchSize < plan.entries.length) {
+      await yieldBetweenBatches()
+    }
   }
 
   let mapFilePath: string | null = null

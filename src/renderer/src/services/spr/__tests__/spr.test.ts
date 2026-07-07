@@ -369,12 +369,11 @@ describe('readSpr / writeSpr round-trip', () => {
     }
   })
 
-  it('clamps non-extended sprite count to 0xFFFE', () => {
+  it('rejects non-extended sprite count above 0xFFFE', () => {
     const sprites = new Map<number, Uint8Array>()
-    const written = writeSpr({ signature: 0x1, spriteCount: 0xffff, sprites }, false)
-    const result = readSpr(written, false)
-
-    expect(result.spriteCount).toBe(0xfffe)
+    expect(() => writeSpr({ signature: 0x1, spriteCount: 0xffff, sprites }, false)).toThrow(
+      /extended/i
+    )
   })
 
   it('preserves complex compressed pixel data through file round-trip', () => {
@@ -401,6 +400,24 @@ describe('readSpr / writeSpr round-trip', () => {
     // Verify full decompress round-trip
     const decompressed = uncompressPixels(result.sprites.get(1)!, true)
     expect(decompressed).toEqual(pixels)
+  })
+
+  it('rejects compressed sprite payloads that cannot fit in the SPR length field', () => {
+    const sprites = new Map<number, Uint8Array>()
+    sprites.set(1, new Uint8Array(0x1_0000))
+
+    expect(() => writeSpr({ signature: 0x42, spriteCount: 1, sprites }, true)).toThrow(
+      /too large/i
+    )
+  })
+
+  it('rejects files whose sprite offsets would exceed uint32', () => {
+    const compressed = new Uint8Array(0xffff)
+    const sprites = { get: () => compressed } as unknown as Map<number, Uint8Array>
+
+    expect(() => writeSpr({ signature: 0x42, spriteCount: 66_000, sprites }, true)).toThrow(
+      /too large/i
+    )
   })
 })
 

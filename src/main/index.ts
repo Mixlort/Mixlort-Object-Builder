@@ -6,7 +6,10 @@ import { buildApplicationMenu, updateMenuState } from './services/menu-service'
 import { initLogger, closeLogger, writeError, writeLog } from './services/logger-service'
 import { clearRecoveryData, resolveCompileRecoveryOnStartup } from './services/recovery-service'
 import { initUpdater } from './services/updater-service'
-import { closeObjectViewerWindow } from './services/object-viewer-window-service'
+import {
+  closeObjectViewerWindow,
+  isObjectViewerWindow
+} from './services/object-viewer-window-service'
 import { APP_CONFIRM_CLOSE } from '../shared/ipc-channels'
 
 // ---------------------------------------------------------------------------
@@ -150,6 +153,16 @@ async function createWindow(splash: BrowserWindow | null): Promise<void> {
     return { action: 'deny' }
   })
 
+  // Capture renderer crashes (e.g. OOM on very large projects) to the log so we
+  // can tell an out-of-memory kill apart from a logic error after the fact.
+  mainWindow.webContents.on('render-process-gone', (_event, details) => {
+    writeError(`Renderer process gone: reason=${details.reason}, exitCode=${details.exitCode}`)
+  })
+
+  mainWindow.on('unresponsive', () => {
+    writeError('Renderer became unresponsive')
+  })
+
   if (process.env['ELECTRON_RENDERER_URL']) {
     mainWindow.loadURL(process.env['ELECTRON_RENDERER_URL'])
   } else {
@@ -175,7 +188,28 @@ process.on('unhandledRejection', (reason) => {
 // App lifecycle
 // ---------------------------------------------------------------------------
 
+// Ensure a single running instance. A second launch (e.g. the dev harness
+// respawning Electron after a renderer crash, or the user reopening the app)
+// must never open a second window onto the same project files: two instances
+// saving the same .dat/.spr race each other and corrupt them.
+if (!app.requestSingleInstanceLock()) {
+  app.quit()
+}
+
+app.on('second-instance', () => {
+  const win =
+    BrowserWindow.getAllWindows().find((window) => !isObjectViewerWindow(window)) ??
+    BrowserWindow.getAllWindows()[0]
+  if (win) {
+    if (win.isMinimized()) win.restore()
+    win.focus()
+  }
+})
+
 app.whenReady().then(async () => {
+  // Secondary instance: the primary keeps the lock; bail before creating windows.
+  if (!app.hasSingleInstanceLock()) return
+
   initLogger()
   const compileRecovery = resolveCompileRecoveryOnStartup()
   if (compileRecovery.status === 'restored') {

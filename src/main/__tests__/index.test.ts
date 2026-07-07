@@ -13,7 +13,9 @@ const { appHandlers, appMock } = vi.hoisted(() => {
       on: vi.fn((event: string, handler: AppHandler) => {
         handlers.set(event, handler)
       }),
-      quit: vi.fn()
+      quit: vi.fn(),
+      requestSingleInstanceLock: vi.fn(() => true),
+      hasSingleInstanceLock: vi.fn(() => true)
     }
   }
 })
@@ -61,7 +63,8 @@ vi.mock('../services/updater-service', () => ({
 }))
 
 vi.mock('../services/object-viewer-window-service', () => ({
-  closeObjectViewerWindow: vi.fn()
+  closeObjectViewerWindow: vi.fn(),
+  isObjectViewerWindow: vi.fn(() => false)
 }))
 
 describe('main process lifecycle', () => {
@@ -72,6 +75,8 @@ describe('main process lifecycle', () => {
       appHandlers.set(event, handler)
     })
     appMock.whenReady.mockImplementation(() => new Promise(() => {}))
+    appMock.requestSingleInstanceLock.mockReturnValue(true)
+    appMock.hasSingleInstanceLock.mockReturnValue(true)
   })
 
   it('quits the app when the last window closes', async () => {
@@ -85,5 +90,15 @@ describe('main process lifecycle', () => {
     onWindowAllClosed?.()
 
     expect(appMock.quit).toHaveBeenCalledTimes(1)
+  })
+
+  it('quits immediately when another instance already holds the single-instance lock', async () => {
+    vi.resetModules()
+    appMock.requestSingleInstanceLock.mockReturnValue(false)
+
+    await import('../index')
+
+    expect(appMock.requestSingleInstanceLock).toHaveBeenCalled()
+    expect(appMock.quit).toHaveBeenCalled()
   })
 })

@@ -120,6 +120,26 @@ function nextTask(): Promise<void> {
   })
 }
 
+function getMaxKnownSpriteId(spriteStore: ReturnType<typeof useSpriteStore.getState>): number {
+  let maxId = Math.max(
+    spriteStore.totalSpriteCount,
+    spriteStore.spriteAccessor?.spriteCount ?? 0,
+    spriteStore.fileBackedSource?.spriteCount ?? 0
+  )
+
+  for (const id of spriteStore.sprites.keys()) {
+    if (id > maxId) maxId = id
+  }
+  for (const id of spriteStore.cachedSprites.keys()) {
+    if (id > maxId) maxId = id
+  }
+  for (const id of spriteStore.deletedSpriteIds) {
+    if (id > maxId) maxId = id
+  }
+
+  return maxId
+}
+
 type PagePrepareProgress = {
   done: number
   total: number
@@ -407,6 +427,9 @@ export function ThingListPanel({
   const [filterLoadingProgress, setFilterLoadingProgress] = useState<PagePrepareProgress | null>(null)
   const [filterLoadingNote, setFilterLoadingNote] = useState<string | null>(null)
   const [pagePrepareProgress, setPagePrepareProgress] = useState<PagePrepareProgress | null>(null)
+  const [dropImportLoadingLabel, setDropImportLoadingLabel] = useState('')
+  const [dropImportLoadingProgress, setDropImportLoadingProgress] =
+    useState<PagePrepareProgress | null>(null)
   const preloadTokenRef = useRef(0)
 
   // Debounced search filter (150ms delay for filtering, immediate input update)
@@ -477,6 +500,7 @@ export function ThingListPanel({
   const selectedThingId = useAppStore(selectSelectedThingId)
   const selectedThingIds = useAppStore(selectSelectedThingIds)
   const isLoaded = useAppStore(selectIsProjectLoaded)
+  const isUiLocked = useAppStore((s) => s.ui.locked)
   const things = useAppStore((s) => s.things)
 
   // Store actions
@@ -553,7 +577,7 @@ export function ThingListPanel({
   const [readyEffectColorAnalysisKey, setReadyEffectColorAnalysisKey] = useState('')
 
   useEffect(() => {
-    if (!effectColorAnalysisKey) {
+    if (isUiLocked || !effectColorAnalysisKey) {
       setReadyEffectColorAnalysisKey('')
       setFilterLoadingLabel('')
       setFilterLoadingProgress(null)
@@ -607,7 +631,12 @@ export function ThingListPanel({
     return () => {
       cancelled = true
     }
-  }, [effectColorAnalysisKey, loadingLabels.cachedAfterFirstRun, loadingLabels.filteringObjects])
+  }, [
+    effectColorAnalysisKey,
+    isUiLocked,
+    loadingLabels.cachedAfterFirstRun,
+    loadingLabels.filteringObjects
+  ])
 
   const effectColorAnalysisReady =
     effectColorAnalysisKey === '' || readyEffectColorAnalysisKey === effectColorAnalysisKey
@@ -874,7 +903,7 @@ export function ThingListPanel({
   )
 
   useEffect(() => {
-    if (!isFileBackedSpriteSource) {
+    if (!isFileBackedSpriteSource || isUiLocked) {
       setFilterLoadingLabel('')
       setFilterLoadingProgress(null)
       setFilterLoadingNote(null)
@@ -992,6 +1021,7 @@ export function ThingListPanel({
     effectPreviewFrameMode,
     foregroundPreloadKey,
     isFileBackedSpriteSource,
+    isUiLocked,
     pageThings,
     pageThumbnailSpriteIdsKey,
     loadingLabels.loadingPageSprites,
@@ -1001,6 +1031,15 @@ export function ThingListPanel({
 
   useEffect(() => {
     if (!onLoadingStateChange) return
+
+    if (dropImportLoadingLabel) {
+      onLoadingStateChange({
+        active: true,
+        label: dropImportLoadingLabel,
+        progress: dropImportLoadingProgress ?? undefined
+      })
+      return
+    }
 
     const { globalLabel, globalProgress, globalNote } = getThingListLoadingMessages(
       filterLoadingLabel,
@@ -1021,6 +1060,8 @@ export function ThingListPanel({
 
     onLoadingStateChange({ active: false, label: '' })
   }, [
+    dropImportLoadingLabel,
+    dropImportLoadingProgress,
     filterLoadingLabel,
     filterLoadingNote,
     filterLoadingProgress,
@@ -1036,9 +1077,9 @@ export function ThingListPanel({
   }, [onLoadingStateChange])
 
   useEffect(() => {
-    if (!isFileBackedSpriteSource || !visibleThumbnailSpriteIdsKey) return
+    if (isUiLocked || !isFileBackedSpriteSource || !visibleThumbnailSpriteIdsKey) return
     void useSpriteStore.getState().ensureSpritesCached(parseSpriteIdsKey(visibleThumbnailSpriteIdsKey))
-  }, [isFileBackedSpriteSource, visibleThumbnailSpriteIdsKey])
+  }, [isFileBackedSpriteSource, isUiLocked, visibleThumbnailSpriteIdsKey])
 
   const { localLabel: localPagePrepareLabel } = useMemo(
     () =>
@@ -1415,38 +1456,108 @@ export function ThingListPanel({
       obdFiles.sort((a, b) => compareFileNamesNaturally(a.name, b.name))
 
       const appStore = useAppStore.getState()
+      const importLabel = t('controls.importingObjects')
 
-      for (const file of obdFiles) {
-        try {
-          const buffer = await file.arrayBuffer()
-          const thingData = await workerService.decodeObd(new Uint8Array(buffer).buffer)
-          const imported = materializeImportedThingData({
-            thingData,
-            transparent: transparentEnabled,
-            addSprite: (compressed) => useSpriteStore.getState().addSprite(compressed)
-          })
+      appStore.setLocked(true)
+      setDropImportLoadingLabel(`${importLabel} 0/${obdFiles.length}`)
+      setDropImportLoadingProgress({ done: 0, total: obdFiles.length })
 
-          // Add as new thing to the matching category
-          const category = imported.thing.category
+      await nextTask()
+
+      try {
+        const spriteStore = useSpriteStore.getState()
+        const spriteEntries: Array<[number, Uint8Array]> = []
+        const importedByCategory = new Map<ThingCategory, ThingType[]>()
+        const nextThingIdByCategory = new Map<ThingCategory, number>()
+        let nextSpriteId = getMaxKnownSpriteId(spriteStore) + 1
+        let importedCount = 0
+
+        const takeNextThingId = (category: ThingCategory): number => {
+          const queuedNextId = nextThingIdByCategory.get(category)
+          if (queuedNextId !== undefined) {
+            nextThingIdByCategory.set(category, queuedNextId + 1)
+            return queuedNextId
+          }
+
           const allThings = appStore.getThingsByCategory(category)
           const maxId = allThings.length > 0 ? allThings[allThings.length - 1].id : 0
-          imported.thing.id = maxId + 1
-
-          appStore.addThing(category, imported.thing)
-          appStore.setProjectChanged(true)
-          appStore.setSpriteCount(useSpriteStore.getState().getSpriteCount())
-          appStore.addLog('info', `Imported ${file.name} as ${category} #${imported.thing.id}`)
-        } catch (err) {
-          const msg = err instanceof Error ? err.message : String(err)
-          appStore.addLog('error', `Failed to import ${file.name}: ${msg}`)
+          const nextId = maxId + 1
+          nextThingIdByCategory.set(category, nextId + 1)
+          return nextId
         }
-      }
 
-      if (window.api?.menu) {
-        window.api.menu.updateState({ clientChanged: true })
+        for (let index = 0; index < obdFiles.length; index++) {
+          const file = obdFiles[index]
+          const spriteEntryStart = spriteEntries.length
+          const nextSpriteIdStart = nextSpriteId
+          try {
+            const buffer = await file.arrayBuffer()
+            const thingData = await workerService.decodeObd(new Uint8Array(buffer).buffer)
+            const imported = materializeImportedThingData({
+              thingData,
+              transparent: transparentEnabled,
+              addSprite: (compressed) => {
+                const spriteId = nextSpriteId++
+                if (compressed) {
+                  spriteEntries.push([spriteId, compressed])
+                }
+                return spriteId
+              }
+            })
+
+            // Add as new thing to the matching category
+            const category = imported.thing.category
+            imported.thing.id = takeNextThingId(category)
+            imported.thing.category = category
+
+            const categoryImports = importedByCategory.get(category) ?? []
+            categoryImports.push(imported.thing)
+            importedByCategory.set(category, categoryImports)
+            importedCount++
+          } catch (err) {
+            spriteEntries.splice(spriteEntryStart)
+            nextSpriteId = nextSpriteIdStart
+            const msg = err instanceof Error ? err.message : String(err)
+            appStore.addLog('error', `Failed to import ${file.name}: ${msg}`)
+          } finally {
+            const done = index + 1
+            setDropImportLoadingLabel(`${importLabel} ${done}/${obdFiles.length}`)
+            setDropImportLoadingProgress({ done, total: obdFiles.length })
+          }
+        }
+
+        if (spriteEntries.length > 0) {
+          useSpriteStore.getState().replaceSprites(spriteEntries)
+          appStore.setSpriteCount(useSpriteStore.getState().getSpriteCount())
+        }
+
+        for (const [category, importedThings] of importedByCategory) {
+          const nextThings = [...appStore.getThingsByCategory(category), ...importedThings].sort(
+            (a, b) => a.id - b.id
+          )
+          appStore.setThings(category, nextThings)
+        }
+
+        if (importedCount > 0) {
+          appStore.setProjectChanged(true)
+          appStore.addLog(
+            'info',
+            `Imported ${importedCount} object${importedCount === 1 ? '' : 's'} from ${
+              obdFiles.length
+            } file${obdFiles.length === 1 ? '' : 's'}`
+          )
+        }
+
+        if (importedCount > 0 && window.api?.menu) {
+          window.api.menu.updateState({ clientChanged: true })
+        }
+      } finally {
+        appStore.setLocked(false)
+        setDropImportLoadingLabel('')
+        setDropImportLoadingProgress(null)
       }
     },
-    [isLoaded, transparentEnabled]
+    [isLoaded, t, transparentEnabled]
   )
 
   // -------------------------------------------------------------------------

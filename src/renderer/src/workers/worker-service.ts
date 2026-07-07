@@ -190,9 +190,9 @@ export const workerService = {
    * @param data - ThingData to encode
    * @returns OBD binary data
    */
-  async encodeObd(data: ThingData): Promise<ArrayBuffer> {
+  async encodeObd(data: ThingData, transfer?: Transferable[]): Promise<ArrayBuffer> {
     const payload: EncodeObdPayload = { data }
-    return getObdWorker().request<ArrayBuffer>(OBD_WORKER_ENCODE, payload)
+    return getObdWorker().request<ArrayBuffer>(OBD_WORKER_ENCODE, payload, transfer)
   },
 
   /**

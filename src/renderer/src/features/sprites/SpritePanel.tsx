@@ -40,6 +40,7 @@ import { compareFileNamesNaturally } from '../../utils'
 
 const CELL_SIZE = 48
 const PREVIEW_SIZE = 96
+const SPRITE_IMPORT_BATCH_SIZE = 25
 
 /** Default page size matching legacy spritesListAmount setting */
 const DEFAULT_SPRITE_PAGE_SIZE = 100
@@ -146,6 +147,67 @@ async function encodeSpritePng(pixels: Uint8Array): Promise<ArrayBuffer> {
 
 function joinFilePath(directory: string, fileName: string): string {
   return `${directory.replace(/[\\/]+$/u, '')}/${fileName}`
+}
+
+function yieldToBrowser(): Promise<void> {
+  return new Promise((resolve) => {
+    if (typeof window.requestAnimationFrame === 'function') {
+      window.requestAnimationFrame(() => resolve())
+    } else {
+      window.setTimeout(resolve, 0)
+    }
+  })
+}
+
+function readFileAsDataUrl(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => {
+      if (typeof reader.result === 'string') {
+        resolve(reader.result)
+      } else {
+        reject(new Error(`Failed to read image: ${file.name}`))
+      }
+    }
+    reader.onerror = () => reject(new Error(`Failed to read image: ${file.name}`))
+    reader.onabort = () => reject(new Error(`Image read was cancelled: ${file.name}`))
+    reader.readAsDataURL(file)
+  })
+}
+
+function loadImageFromDataUrl(dataUrl: string, fileName: string): Promise<HTMLImageElement> {
+  return new Promise((resolve, reject) => {
+    const img = new Image()
+    img.onload = () => resolve(img)
+    img.onerror = () => reject(new Error(`Failed to load image: ${fileName}`))
+    img.src = dataUrl
+  })
+}
+
+function drawImageToArgbPixels(image: HTMLImageElement): Uint8Array {
+  const canvas = document.createElement('canvas')
+  canvas.width = SPRITE_DEFAULT_SIZE
+  canvas.height = SPRITE_DEFAULT_SIZE
+  const ctx = canvas.getContext('2d')
+  if (!ctx) {
+    throw new Error('Canvas 2D context unavailable')
+  }
+
+  try {
+    ctx.clearRect(0, 0, SPRITE_DEFAULT_SIZE, SPRITE_DEFAULT_SIZE)
+    ctx.imageSmoothingEnabled = false
+    ctx.drawImage(image, 0, 0, SPRITE_DEFAULT_SIZE, SPRITE_DEFAULT_SIZE)
+    return rgbaToArgb(ctx.getImageData(0, 0, SPRITE_DEFAULT_SIZE, SPRITE_DEFAULT_SIZE).data)
+  } finally {
+    canvas.width = 0
+    canvas.height = 0
+  }
+}
+
+async function loadArgbPixelsFromFile(file: File): Promise<Uint8Array> {
+  const dataUrl = await readFileAsDataUrl(file)
+  const image = await loadImageFromDataUrl(dataUrl, file.name)
+  return drawImageToArgbPixels(image)
 }
 
 // ---------------------------------------------------------------------------
@@ -317,10 +379,18 @@ async function loadArgbPixelsFromPath(filePath: string): Promise<Uint8Array> {
 
 interface SpritePanelProps {
   pageSize?: number
+  onSpriteImportProgress?: (progress: SpriteImportProgress | null) => void
+}
+
+export interface SpriteImportProgress {
+  label: string
+  done: number
+  total: number
 }
 
 export function SpritePanel({
-  pageSize = DEFAULT_SPRITE_PAGE_SIZE
+  pageSize = DEFAULT_SPRITE_PAGE_SIZE,
+  onSpriteImportProgress
 }: SpritePanelProps): React.JSX.Element {
   const { t } = useTranslation()
   const togglePanel = useAppStore((s) => s.togglePanel)
@@ -520,7 +590,9 @@ export function SpritePanel({
 
       const nextSpriteIds = nextSelectedSlots
         .map((slotIndex) => spriteSlots[slotIndex]?.spriteId ?? 0)
-        .filter((spriteId, slotIndex, array) => spriteId > 0 && array.indexOf(spriteId) === slotIndex)
+        .filter(
+          (spriteId, slotIndex, array) => spriteId > 0 && array.indexOf(spriteId) === slotIndex
+        )
 
       if (nextSpriteIds.length > 0) {
         useSpriteStore.getState().selectSprites(nextSpriteIds)
@@ -549,9 +621,11 @@ export function SpritePanel({
 
   const handleSpriteDragOver = useCallback(
     (e: React.DragEvent, index: number) => {
+      if (dragSourceIndex === null) return
+
       e.preventDefault()
       e.stopPropagation()
-      if (dragSourceIndex !== null && dragSourceIndex !== index) {
+      if (dragSourceIndex !== index) {
         e.dataTransfer.dropEffect = 'move'
         setDragOverIndex(index)
       }
@@ -565,13 +639,15 @@ export function SpritePanel({
 
   const handleSpriteDrop = useCallback(
     (e: React.DragEvent, targetIndex: number) => {
+      const sourceIndexStr = e.dataTransfer.getData?.('text/x-sprite-index') ?? ''
+      if (!sourceIndexStr) return
+
       e.preventDefault()
       e.stopPropagation()
       setDragOverIndex(null)
       setDragSourceIndex(null)
 
-      const sourceIndexStr = e.dataTransfer.getData('text/x-sprite-index')
-      if (!sourceIndexStr || !editingThingData) return
+      if (!editingThingData) return
 
       const sourceIndex = parseInt(sourceIndexStr, 10)
       if (isNaN(sourceIndex) || sourceIndex === targetIndex) return
@@ -906,100 +982,178 @@ export function SpritePanel({
       const fileList = e.dataTransfer?.files
       if (!fileList || fileList.length === 0) return
 
-      const files = Array.from(fileList).filter(
-        (f) =>
-          f.type.startsWith('image/') ||
-          f.name.endsWith('.png') ||
-          f.name.endsWith('.bmp') ||
-          f.name.endsWith('.jpg')
-      )
+      const files = Array.from(fileList)
+        .filter((f) => {
+          const fileName = f.name.toLowerCase()
+          return (
+            f.type.startsWith('image/') ||
+            fileName.endsWith('.png') ||
+            fileName.endsWith('.bmp') ||
+            fileName.endsWith('.jpg') ||
+            fileName.endsWith('.jpeg')
+          )
+        })
+        .sort((a, b) => compareFileNamesNaturally(a.name, b.name))
 
       if (files.length === 0) return
 
       // Import each image file as a sprite, starting from the selected slot or slot 0
       const startSlot = selectedSlot ?? 0
       const maxSlots = spriteIndex.length
+      const filesToImport = files.slice(0, Math.max(0, maxSlots - startSlot))
+      if (filesToImport.length === 0) return
 
-      files.slice(0, maxSlots - startSlot).forEach((file, fileIdx) => {
-        const reader = new FileReader()
-        reader.onload = (): void => {
-          const img = new Image()
-          img.onload = (): void => {
-            // Draw image to 32x32 canvas
-            const canvas = document.createElement('canvas')
-            canvas.width = SPRITE_DEFAULT_SIZE
-            canvas.height = SPRITE_DEFAULT_SIZE
-            const ctx = canvas.getContext('2d')
-            if (!ctx) return
+      void (async () => {
+        const progressLabel = 'Importing sprites...'
+        const beforeThing = cloneThingType(editingThingData.thing)
+        const updatedThing = cloneThingType(editingThingData.thing)
+        const fg = updatedThing.frameGroups[frameGroupType]
+        if (!fg) return
 
-            ctx.clearRect(0, 0, SPRITE_DEFAULT_SIZE, SPRITE_DEFAULT_SIZE)
-            ctx.imageSmoothingEnabled = false
-            ctx.drawImage(img, 0, 0, SPRITE_DEFAULT_SIZE, SPRITE_DEFAULT_SIZE)
-            const imageData = ctx.getImageData(0, 0, SPRITE_DEFAULT_SIZE, SPRITE_DEFAULT_SIZE)
+        // Snapshot which object is being edited so we can bail if the user
+        // navigates away during a long import instead of clobbering the new one.
+        const capturedThingId = editingThingData.thing.id
+        const capturedCategory = editingThingData.thing.category
 
-            // Convert RGBA -> ARGB
-            const argbPixels = rgbaToArgb(imageData.data)
+        const newSpriteIndex = [...fg.spriteIndex]
+        const updatedInlineSprites = [...(editingThingData.sprites.get(frameGroupType) ?? [])]
 
-            // Determine slot index
+        const compressedList: Array<Uint8Array | null> = []
+        const argbList: Uint8Array[] = []
+        const slotList: number[] = []
+        let addedSpriteIds: number[] = []
+
+        onSpriteImportProgress?.({
+          label: progressLabel,
+          done: 0,
+          total: filesToImport.length
+        })
+
+        try {
+          await yieldToBrowser()
+
+          for (let fileIdx = 0; fileIdx < filesToImport.length; fileIdx++) {
             const slotIdx = startSlot + fileIdx
-            if (slotIdx >= maxSlots) return
+            if (slotIdx >= maxSlots) break
 
-            // Update editingThingData sprites (inline)
-            const currentSprites = editingThingData.sprites.get(frameGroupType) ?? []
-            const newSprites = [...currentSprites]
-            while (newSprites.length <= slotIdx) {
-              newSprites.push(createSpriteData())
-            }
-            newSprites[slotIdx] = { id: 0, pixels: argbPixels }
+            const argbPixels = await loadArgbPixelsFromFile(filesToImport[fileIdx])
+            compressedList.push(compressPixels(argbPixels, transparent))
+            argbList.push(argbPixels)
+            slotList.push(slotIdx)
 
-            // Build updated ThingData
-            const newSpritesMap = new Map(editingThingData.sprites)
-            newSpritesMap.set(frameGroupType, newSprites)
-
-            // Compress and store in sprite store
-            const compressed = compressPixels(argbPixels, transparent)
-            const spriteStore = useSpriteStore.getState()
-            const newSpriteId = spriteStore.addSprite(compressed)
-
-            // Update the thing's spriteIndex
-            const updatedThing = cloneThingType(editingThingData.thing)
-            const fg = updatedThing.frameGroups[frameGroupType]
-            if (fg) {
-              const newSpriteIndex = [...fg.spriteIndex]
-              newSpriteIndex[slotIdx] = newSpriteId
-              fg.spriteIndex = newSpriteIndex
-            }
-
-            // Push to editor store
-            const editorStore = useEditorStore.getState()
-            editorStore.setEditingThingData({
-              ...editingThingData,
-              thing: updatedThing,
-              sprites: newSpritesMap
+            onSpriteImportProgress?.({
+              label: progressLabel,
+              done: fileIdx + 1,
+              total: filesToImport.length
             })
-            editorStore.setEditingChanged(true)
 
-            // Update app store thing
-            const appStore = useAppStore.getState()
-            appStore.updateThing(
-              editingThingData.thing.category,
-              editingThingData.thing.id,
-              updatedThing
-            )
-            appStore.setProjectChanged(true)
-            appStore.setSpriteCount(Math.max(appStore.spriteCount ?? 0, newSpriteId))
-
-            // Update menu state
-            if (window.api?.menu) {
-              window.api.menu.updateState({ clientChanged: true })
+            if ((fileIdx + 1) % SPRITE_IMPORT_BATCH_SIZE === 0) {
+              await yieldToBrowser()
             }
           }
-          img.src = reader.result as string
+
+          // Single batched insert (one Map clone for the whole import).
+          addedSpriteIds = useSpriteStore.getState().addSprites(compressedList)
+
+          for (let i = 0; i < addedSpriteIds.length; i++) {
+            const slotIdx = slotList[i]
+            const newSpriteId = addedSpriteIds[i]
+            while (updatedInlineSprites.length <= slotIdx) {
+              updatedInlineSprites.push(createSpriteData())
+            }
+            updatedInlineSprites[slotIdx] = { id: newSpriteId, pixels: argbList[i] }
+            newSpriteIndex[slotIdx] = newSpriteId
+          }
+
+          // If the edited object changed while we were importing, roll back the
+          // added sprites and abort rather than overwrite the current editor.
+          const currentEditing = useEditorStore.getState().editingThingData
+          if (
+            !currentEditing ||
+            currentEditing.thing.id !== capturedThingId ||
+            currentEditing.thing.category !== capturedCategory
+          ) {
+            if (addedSpriteIds.length > 0) {
+              useSpriteStore.getState().removeSprites(addedSpriteIds)
+            }
+            useAppStore
+              .getState()
+              .addLog(
+                'warning',
+                'Sprite import cancelled: the edited object changed during import.'
+              )
+            return
+          }
+
+          fg.spriteIndex = newSpriteIndex
+
+          const newSpritesMap = new Map(editingThingData.sprites)
+          newSpritesMap.set(frameGroupType, updatedInlineSprites)
+
+          const editorStore = useEditorStore.getState()
+          editorStore.pushUndo({
+            type: 'update-thing',
+            timestamp: Date.now(),
+            description: `Import ${addedSpriteIds.length} sprite(s)`,
+            before: [
+              {
+                id: beforeThing.id,
+                category: beforeThing.category,
+                thingType: beforeThing
+              }
+            ],
+            after: [
+              {
+                id: updatedThing.id,
+                category: updatedThing.category,
+                thingType: cloneThingType(updatedThing)
+              }
+            ]
+          })
+          editorStore.setEditingThingData({
+            ...editingThingData,
+            thing: updatedThing,
+            sprites: newSpritesMap
+          })
+          editorStore.setEditingChanged(true)
+
+          const appStore = useAppStore.getState()
+          appStore.updateThing(
+            editingThingData.thing.category,
+            editingThingData.thing.id,
+            updatedThing
+          )
+          appStore.setProjectChanged(true)
+          // ids from addSprites are sequential, so the last one is the max
+          // (avoids Math.max(...spread) blowing the stack on huge imports).
+          const maxAddedId =
+            addedSpriteIds.length > 0 ? addedSpriteIds[addedSpriteIds.length - 1] : 0
+          appStore.setSpriteCount(Math.max(appStore.spriteCount ?? 0, maxAddedId))
+          appStore.addLog('info', `Imported ${addedSpriteIds.length} sprite(s).`)
+
+          if (window.api?.menu) {
+            await window.api.menu.updateState({ clientChanged: true })
+          }
+        } catch (err) {
+          if (addedSpriteIds.length > 0) {
+            useSpriteStore.getState().removeSprites(addedSpriteIds)
+          }
+          const message = err instanceof Error ? err.message : String(err)
+          useAppStore.getState().addLog('error', `Failed to import sprites: ${message}`)
+        } finally {
+          onSpriteImportProgress?.(null)
         }
-        reader.readAsDataURL(file)
-      })
+      })()
     },
-    [editingThingData, frameGroup, frameGroupType, spriteIndex, selectedSlot, transparent]
+    [
+      editingThingData,
+      frameGroup,
+      frameGroupType,
+      onSpriteImportProgress,
+      spriteIndex,
+      selectedSlot,
+      transparent
+    ]
   )
 
   const handleReplaceSelected = useCallback(async () => {
@@ -1128,7 +1282,9 @@ export function SpritePanel({
     return (
       <div className="flex h-full flex-col bg-bg-secondary" data-testid="sprite-panel">
         <div className="flex h-7 items-center border-b border-border px-2">
-          <span className="flex-1 text-xs font-medium text-text-secondary">{t('labels.sprites')}</span>
+          <span className="flex-1 text-xs font-medium text-text-secondary">
+            {t('labels.sprites')}
+          </span>
           <button
             type="button"
             className="flex h-6 w-6 items-center justify-center rounded-full text-text-secondary transition-colors hover:bg-bg-hover hover:text-text-primary"

@@ -83,7 +83,7 @@ describe('CreateAssetsDialog', () => {
     renderDialog()
     expect(screen.getByText('Extended')).toBeInTheDocument()
     expect(screen.getByText('Transparency')).toBeInTheDocument()
-    expect(screen.getByText('Improved Animations')).toBeInTheDocument()
+    expect(screen.getByText('Improved animations')).toBeInTheDocument()
     expect(screen.getByText('Frame Groups')).toBeInTheDocument()
   })
 

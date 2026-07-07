@@ -16,6 +16,7 @@ import { LruCache } from '../utils/lru-cache'
 import { SpriteAccessor } from '../services/spr/sprite-accessor'
 import type {
   FileBackedPxgSpriteSourceDescriptor,
+  ProjectSprWritePlan,
   SpriteSourceDescriptor
 } from '../../../shared/project-state'
 
@@ -103,6 +104,7 @@ export interface SpriteStoreActions {
   setSprite(id: number, compressed: Uint8Array): void
   removeSprite(id: number): void
   addSprite(compressed: Uint8Array | null): number
+  addSprites(compressedList: Array<Uint8Array | null>): number[]
 
   // Batch operations
   replaceSprites(entries: Array<[number, Uint8Array]>): void
@@ -110,6 +112,11 @@ export interface SpriteStoreActions {
 
   // Materialization
   getAllSprites(): Map<number, Uint8Array>
+  getSpriteWritePlan(
+    sourceFilePath: string | null,
+    signature: number,
+    extended: boolean
+  ): ProjectSprWritePlan
 
   // Rendered cache
   getCachedRender(id: number): string | undefined
@@ -154,6 +161,29 @@ type SpriteStoreSet = (
 ) => void
 type SpriteStoreGet = () => SpriteStore
 
+function packSpriteOverrides(entries: Array<[number, Uint8Array]>): {
+  overrideData: ArrayBuffer
+  overrideIndex: Array<[number, number, number]>
+} {
+  let totalBytes = 0
+  for (const [, data] of entries) {
+    totalBytes += data.byteLength
+  }
+
+  const overrideData = new ArrayBuffer(totalBytes)
+  const bytes = new Uint8Array(overrideData)
+  const overrideIndex: Array<[number, number, number]> = []
+  let offset = 0
+
+  for (const [id, data] of entries) {
+    bytes.set(data, offset)
+    overrideIndex.push([id, offset, data.byteLength])
+    offset += data.byteLength
+  }
+
+  return { overrideData, overrideIndex }
+}
+
 type SpriteCacheWaiter = {
   ids: Set<number>
   resolve: () => void
@@ -193,9 +223,7 @@ function isSpriteCachedOrUnavailable(
   return state.sprites.has(id) || state.cachedSprites.has(id) || emptySpriteCacheIds.has(id)
 }
 
-function updateSpriteCacheLoadingState(
-  set: SpriteStoreSet
-): void {
+function updateSpriteCacheLoadingState(set: SpriteStoreSet): void {
   const pendingCount = getSpriteCacheWorkCount()
   set({
     spriteCacheLoading: pendingCount > 0,
@@ -444,7 +472,12 @@ export const useSpriteStore = create<SpriteStoreState & SpriteStoreActions>()((s
       const changedSpriteIds = state.changedSpriteIds.includes(id)
         ? state.changedSpriteIds
         : [...state.changedSpriteIds, id]
-      return { sprites: newSprites, cachedSprites: newCache, deletedSpriteIds: newDeleted, changedSpriteIds }
+      return {
+        sprites: newSprites,
+        cachedSprites: newCache,
+        deletedSpriteIds: newDeleted,
+        changedSpriteIds
+      }
     })
   },
 
@@ -466,7 +499,12 @@ export const useSpriteStore = create<SpriteStoreState & SpriteStoreActions>()((s
       const changedSpriteIds = state.changedSpriteIds.includes(id)
         ? state.changedSpriteIds
         : [...state.changedSpriteIds, id]
-      return { sprites: newSprites, cachedSprites: newCache, deletedSpriteIds: newDeleted, changedSpriteIds }
+      return {
+        sprites: newSprites,
+        cachedSprites: newCache,
+        deletedSpriteIds: newDeleted,
+        changedSpriteIds
+      }
     })
   },
 
@@ -500,6 +538,46 @@ export const useSpriteStore = create<SpriteStoreState & SpriteStoreActions>()((s
     return newId
   },
 
+  addSprites(compressedList) {
+    const ids: number[] = []
+    if (compressedList.length === 0) return ids
+
+    set((s) => {
+      // Compute the id high-water mark once, then clone the maps a single time
+      // for the whole batch (addSprite clones per call -> O(n^2) on bulk import).
+      let maxId = s.totalSpriteCount
+      for (const id of s.sprites.keys()) {
+        if (id > maxId) maxId = id
+      }
+      if (s.spriteAccessor && s.spriteAccessor.spriteCount > maxId) {
+        maxId = s.spriteAccessor.spriteCount
+      }
+      if (s.fileBackedSource && s.fileBackedSource.spriteCount > maxId) {
+        maxId = s.fileBackedSource.spriteCount
+      }
+
+      const newSprites = new Map(s.sprites)
+      const changedSpriteIds = [...s.changedSpriteIds]
+      let nextId = maxId
+      for (const compressed of compressedList) {
+        nextId += 1
+        ids.push(nextId)
+        if (compressed) {
+          newSprites.set(nextId, compressed)
+        }
+        changedSpriteIds.push(nextId)
+      }
+
+      return {
+        sprites: newSprites,
+        totalSpriteCount: Math.max(s.totalSpriteCount, nextId),
+        changedSpriteIds
+      }
+    })
+
+    return ids
+  },
+
   // --- Batch operations ---
 
   replaceSprites(entries) {
@@ -521,11 +599,14 @@ export const useSpriteStore = create<SpriteStoreState & SpriteStoreActions>()((s
         changedSet.add(id)
       }
 
+      const maxEntryId = entries.reduce((max, [id]) => Math.max(max, id), state.totalSpriteCount)
+
       return {
         sprites: newSprites,
         cachedSprites: newCache,
         deletedSpriteIds: newDeleted,
-        changedSpriteIds: Array.from(changedSet)
+        changedSpriteIds: Array.from(changedSet),
+        totalSpriteCount: maxEntryId
       }
     })
   },
@@ -590,6 +671,36 @@ export const useSpriteStore = create<SpriteStoreState & SpriteStoreActions>()((s
     }
 
     return result
+  },
+
+  getSpriteWritePlan(sourceFilePath, signature, extended) {
+    const state = get()
+    let spriteCount = state.totalSpriteCount
+    const baseCount = state.spriteAccessor?.spriteCount ?? state.fileBackedSource?.spriteCount ?? 0
+    if (baseCount > spriteCount) spriteCount = baseCount
+    for (const id of state.sprites.keys()) {
+      if (id > spriteCount) spriteCount = id
+    }
+    for (const id of state.cachedSprites.keys()) {
+      if (id > spriteCount) spriteCount = id
+    }
+    for (const id of state.deletedSpriteIds) {
+      if (id > spriteCount) spriteCount = id
+    }
+
+    const overrides = Array.from(state.sprites.entries()).sort((a, b) => a[0] - b[0])
+    const packedOverrides = packSpriteOverrides(overrides)
+
+    return {
+      sourceFilePath,
+      signature,
+      spriteCount,
+      extended,
+      overrides: [],
+      overrideData: packedOverrides.overrideData,
+      overrideIndex: packedOverrides.overrideIndex,
+      deletedIds: Array.from(state.deletedSpriteIds)
+    }
   },
 
   // --- Rendered cache ---

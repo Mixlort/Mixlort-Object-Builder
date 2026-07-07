@@ -6,7 +6,7 @@
 
 import React, { act } from 'react'
 import { describe, it, expect, beforeEach, vi } from 'vitest'
-import { render, screen, fireEvent } from '@testing-library/react'
+import { render, screen, fireEvent, waitFor } from '@testing-library/react'
 import { SpritePanel } from '../SpritePanel'
 import {
   resetAppStore,
@@ -619,6 +619,77 @@ describe('SpritePanel', () => {
       expect(panel.className).toContain('ring-accent')
       fireEvent.dragLeave(panel)
       expect(panel.className).not.toContain('ring-accent')
+    })
+
+    it('reports progress while importing dropped sprite files', async () => {
+      const originalImage = global.Image
+      const originalFileReader = global.FileReader
+      const progress = vi.fn()
+      const mockCanvasContext = {
+        fillRect: vi.fn(),
+        clearRect: vi.fn(),
+        drawImage: vi.fn(),
+        putImageData: vi.fn(),
+        getImageData: vi.fn(() => ({
+          data: new Uint8ClampedArray(32 * 32 * 4)
+        })),
+        fillStyle: '',
+        imageSmoothingEnabled: false
+      } as unknown as CanvasRenderingContext2D
+
+      vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue(mockCanvasContext)
+
+      class MockImage {
+        onload: null | (() => void) = null
+        onerror: null | (() => void) = null
+
+        set src(_value: string) {
+          this.onload?.()
+        }
+      }
+
+      class MockFileReader {
+        onload: null | (() => void) = null
+        result: string | ArrayBuffer | null = 'data:image/png;base64,mock'
+
+        readAsDataURL(): void {
+          this.onload?.()
+        }
+      }
+
+      global.Image = MockImage as unknown as typeof Image
+      global.FileReader = MockFileReader as unknown as typeof FileReader
+
+      try {
+        render(<SpritePanel {...{ onSpriteImportProgress: progress }} />)
+
+        await act(async () => {
+          fireEvent.drop(screen.getByTestId('sprite-cell-0'), {
+            dataTransfer: {
+              files: [
+                new File(['a'], 'sprite10.png', { type: 'image/png' }),
+                new File(['b'], 'sprite2.png', { type: 'image/png' })
+              ]
+            }
+          })
+        })
+
+        await waitFor(() => expect(progress).toHaveBeenLastCalledWith(null))
+        expect(progress).toHaveBeenCalledWith({
+          label: 'Importing sprites...',
+          done: 0,
+          total: 2
+        })
+        expect(progress).toHaveBeenCalledWith({
+          label: 'Importing sprites...',
+          done: 2,
+          total: 2
+        })
+        expect(progress).toHaveBeenLastCalledWith(null)
+      } finally {
+        global.Image = originalImage
+        global.FileReader = originalFileReader
+      }
     })
   })
 

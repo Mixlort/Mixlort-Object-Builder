@@ -18,12 +18,19 @@ import {
   setThingFrameGroup,
   getThingFrameGroup,
   getFrameGroupTotalSprites,
+  getThingCategoryValue,
   SPRITE_DEFAULT_DATA_SIZE
 } from '../../../types'
 
 // ---------------------------------------------------------------------------
 // Helper to create test sprites
 // ---------------------------------------------------------------------------
+
+function toArrayBuffer(bytes: Uint8Array): ArrayBuffer {
+  const buffer = new ArrayBuffer(bytes.byteLength)
+  new Uint8Array(buffer).set(bytes)
+  return buffer
+}
 
 function makePixels(size: number, fill: number): Uint8Array {
   const pixels = new Uint8Array(size)
@@ -145,6 +152,73 @@ describe('LZMA', () => {
     const compressed = await lzmaCompress(original)
     const decompressed = await lzmaDecompress(compressed)
     expect(decompressed).toEqual(original)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Defensive decoding / encoding
+// ---------------------------------------------------------------------------
+
+describe('OBD safety validation', () => {
+  it('rejects variable-size sprite payloads larger than one 32x32 ARGB sprite', async () => {
+    const data = makeTestThingData({
+      obdVersion: OBDVersion.VERSION_3,
+      clientVersion: 1056,
+      spritePixelSize: SPRITE_DEFAULT_DATA_SIZE + 1
+    })
+
+    await expect(encodeObd(data)).rejects.toThrow(/Invalid sprite data length/)
+  })
+
+  it('rejects OBD files with too many sprite slots before allocating sprite arrays', async () => {
+    const writer = new BinaryWriter()
+    const thing = createThingType()
+    thing.category = TC.ITEM
+
+    writer.writeUint16(OBDVersion.VERSION_3)
+    writer.writeUint16(1056)
+    writer.writeUint8(getThingCategoryValue(TC.ITEM))
+    writer.writeUint32(0)
+    writeObdProperties(writer, thing)
+    writer.writeUint8(255) // width
+    writer.writeUint8(255) // height
+    writer.writeUint8(64) // exact size
+    writer.writeUint8(1) // layers
+    writer.writeUint8(1) // patternX
+    writer.writeUint8(1) // patternY
+    writer.writeUint8(1) // patternZ
+    writer.writeUint8(1) // frames
+
+    const encoded = toArrayBuffer(await lzmaCompress(new Uint8Array(writer.toArrayBuffer())))
+
+    await expect(decodeObd(encoded)).rejects.toThrow(/more than 4096 sprites/)
+  })
+
+  it('rejects truncated variable-size sprite data with a useful error', async () => {
+    const writer = new BinaryWriter()
+    const thing = createThingType()
+    thing.category = TC.ITEM
+
+    writer.writeUint16(OBDVersion.VERSION_3)
+    writer.writeUint16(1056)
+    writer.writeUint8(getThingCategoryValue(TC.ITEM))
+    writer.writeUint32(0)
+    writeObdProperties(writer, thing)
+    writer.writeUint8(1) // width
+    writer.writeUint8(1) // height
+    writer.writeUint8(32) // exact size
+    writer.writeUint8(1) // layers
+    writer.writeUint8(1) // patternX
+    writer.writeUint8(1) // patternY
+    writer.writeUint8(1) // patternZ
+    writer.writeUint8(1) // frames
+    writer.writeUint32(1) // sprite id
+    writer.writeUint32(4) // declared data size
+    writer.writeUint8(1) // only one byte is available
+
+    const truncated = toArrayBuffer(await lzmaCompress(new Uint8Array(writer.toArrayBuffer())))
+
+    await expect(decodeObd(truncated)).rejects.toThrow(/truncated|Unexpected end/i)
   })
 })
 

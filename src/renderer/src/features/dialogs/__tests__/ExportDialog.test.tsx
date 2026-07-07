@@ -55,7 +55,7 @@ function selectFormat(label: string) {
 }
 
 function setFileName(value: string) {
-  const input = screen.getByPlaceholderText('Enter file name...')
+  const input = screen.getByPlaceholderText('Name')
   fireEvent.change(input, { target: { value } })
 }
 
@@ -102,12 +102,12 @@ describe('ExportDialog', () => {
 
   it('renders file name input', () => {
     renderDialog()
-    expect(screen.getByPlaceholderText('Enter file name...')).toBeInTheDocument()
+    expect(screen.getByPlaceholderText('Name')).toBeInTheDocument()
   })
 
   it('renders directory browse field', () => {
     renderDialog()
-    expect(screen.getByPlaceholderText('Select output folder...')).toBeInTheDocument()
+    expect(screen.getByPlaceholderText('Select Folder')).toBeInTheDocument()
     expect(screen.getByText('Browse')).toBeInTheDocument()
   })
 
@@ -162,7 +162,7 @@ describe('ExportDialog', () => {
   it('BMP format shows "No additional options" text', () => {
     renderDialog()
     selectFormat('BMP')
-    expect(screen.getByText('No additional options for BMP format.')).toBeInTheDocument()
+    expect(screen.getByText('Nenhuma opção adicional para o formato BMP.')).toBeInTheDocument()
   })
 
   it('OBD format shows version and OBD version selects', () => {
@@ -185,7 +185,7 @@ describe('ExportDialog', () => {
 
     // Switch to BMP -> no additional options
     selectFormat('BMP')
-    expect(screen.getByText('No additional options for BMP format.')).toBeInTheDocument()
+    expect(screen.getByText('Nenhuma opção adicional para o formato BMP.')).toBeInTheDocument()
     expect(screen.queryByText('Transparent background')).not.toBeInTheDocument()
 
     // Switch to JPG -> quality

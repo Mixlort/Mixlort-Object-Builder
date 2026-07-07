@@ -9,6 +9,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, fireEvent } from '@testing-library/react'
 import { ImportThingDialog } from '../ImportThingDialog'
 import { ThingCategory, createThingData, createThingType } from '../../../types'
+import i18n from '../../../i18n'
 
 vi.mock('../../../workers/worker-service', () => ({
   workerService: {
@@ -28,8 +29,9 @@ vi.mock('../../../workers/worker-service', () => ({
 const mockShowOpenDialog = vi.fn()
 const mockReadBinary = vi.fn()
 
-beforeEach(() => {
+beforeEach(async () => {
   vi.restoreAllMocks()
+  await i18n.changeLanguage('en_US')
 
   Object.defineProperty(window, 'api', {
     value: {
@@ -79,7 +81,7 @@ describe('ImportThingDialog', () => {
 
   it('renders browse field for file selection', () => {
     renderDialog()
-    expect(screen.getByPlaceholderText('Select .obd file...')).toBeInTheDocument()
+    expect(screen.getByPlaceholderText('Select File (.obd)...')).toBeInTheDocument()
     expect(screen.getByText('Browse')).toBeInTheDocument()
   })
 
@@ -157,6 +159,34 @@ describe('ImportThingDialog', () => {
         expect.objectContaining({ multiSelections: true })
       )
     })
+  })
+
+  it('previews only the first selected file and confirms file paths', async () => {
+    const onConfirm = vi.fn()
+    const onClose = vi.fn()
+    renderDialog({ onConfirm, onClose })
+
+    mockShowOpenDialog.mockResolvedValueOnce({
+      canceled: false,
+      filePaths: ['/tmp/2.obd', '/tmp/1.obd']
+    })
+
+    fireEvent.click(screen.getByText('Browse'))
+
+    await vi.waitFor(() => {
+      expect(screen.getByText('2')).toBeInTheDocument()
+    })
+
+    expect(mockReadBinary).toHaveBeenCalledTimes(1)
+    expect(mockReadBinary).toHaveBeenCalledWith('/tmp/1.obd')
+
+    fireEvent.click(screen.getByText('Import'))
+
+    expect(onConfirm).toHaveBeenCalledWith({
+      filePaths: ['/tmp/1.obd', '/tmp/2.obd'],
+      action: 'add'
+    })
+    expect(onClose).toHaveBeenCalledTimes(1)
   })
 
   it('shows count mismatch error when replace file count differs from selected objects', async () => {

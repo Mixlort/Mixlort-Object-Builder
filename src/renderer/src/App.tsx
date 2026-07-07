@@ -8,6 +8,7 @@
  */
 
 import React, { useCallback, useEffect, useRef, useState } from 'react'
+import { flushSync } from 'react-dom'
 import {
   MENU_FILE_NEW,
   MENU_FILE_OPEN,
@@ -32,7 +33,13 @@ import {
   type MenuAction
 } from '../../shared/menu-actions'
 import type { LoadProjectParams } from '../../shared/project-state'
-import { useAppStore, useEditorStore, useSpriteStore, selectUI, selectEditingThingData } from './stores'
+import {
+  useAppStore,
+  useEditorStore,
+  useSpriteStore,
+  selectUI,
+  selectEditingThingData
+} from './stores'
 import {
   ThingCategory,
   type ClientFeatures,
@@ -59,7 +66,7 @@ import { StatusBar } from './components/StatusBar'
 import { LogPanel } from './components/LogPanel'
 import { ThingListPanel, type ThingListAction, type ThingListLoadingState } from './features/things'
 import { ThingTypeEditor } from './features/editor'
-import { SpritePanel } from './features/sprites'
+import { SpritePanel, type SpriteImportProgress } from './features/sprites'
 import { PreviewPanel } from './features/preview'
 import { AnimationEditorDialog } from './features/animation'
 import { SlicerDialog } from './features/slicer'
@@ -108,7 +115,7 @@ import {
   exportThingPlanToFiles,
   type ThingExportEntry
 } from './services/thing-export'
-import { collectThingSpriteIds } from './services/sprite-preload'
+import { collectThingSpriteIds, collectThingsSpriteIds } from './services/sprite-preload'
 import { buildRecoveryOpenResult } from './utils'
 import { materializeImportedThingData } from './services/thing-import/thing-import-service'
 import {
@@ -174,6 +181,11 @@ interface CompileRunParams {
 const MAGENTA_BG_ARGB = 0xffff00ff
 const SPRITE_PRELOAD_BATCH_SIZE = 5000
 
+interface LoadingProgress {
+  done: number
+  total: number
+}
+
 function getMaxThingId(things: ThingType[], fallback: number): number {
   let maxId = fallback
   for (const thing of things) {
@@ -206,8 +218,7 @@ function resolveSpriteDimension(
 ): (typeof SPRITE_DIMENSIONS)[number] {
   return (
     SPRITE_DIMENSIONS.find(
-      (dimension) =>
-        dimension.size === spriteSize && dimension.dataSize === spriteDataSize
+      (dimension) => dimension.size === spriteSize && dimension.dataSize === spriteDataSize
     ) ?? fallback
   )
 }
@@ -287,7 +298,8 @@ function validateThingForCompile(
 async function preloadFileBackedSpriteIds(
   ids: number[],
   setLoadingLabel: (label: string) => void,
-  label: string
+  label: string,
+  setLoadingProgress?: (progress: LoadingProgress | null) => void
 ): Promise<void> {
   if (ids.length === 0 || useSpriteStore.getState().fileBackedSource === null) return
 
@@ -296,6 +308,7 @@ async function preloadFileBackedSpriteIds(
     const batch = ids.slice(start, start + SPRITE_PRELOAD_BATCH_SIZE)
     const loaded = Math.min(start + batch.length, total)
     setLoadingLabel(`${label} ${loaded}/${total}`)
+    setLoadingProgress?.({ done: loaded, total })
     await useSpriteStore.getState().ensureSpritesCached(batch)
   }
 }
@@ -315,11 +328,7 @@ function blendChannel(source: number, alpha: number, background: number): number
   return Math.round(source * alpha + background * (1 - alpha))
 }
 
-function encodeBmpFromRgba(
-  width: number,
-  height: number,
-  rgba: Uint8ClampedArray
-): ArrayBuffer {
+function encodeBmpFromRgba(width: number, height: number, rgba: Uint8ClampedArray): ArrayBuffer {
   const rowStride = width * 3
   const rowPadding = (4 - (rowStride % 4)) % 4
   const pixelDataSize = (rowStride + rowPadding) * height
@@ -388,6 +397,24 @@ async function canvasToArrayBuffer(
   return blob.arrayBuffer()
 }
 
+function collectThingDataSpriteTransferables(data: ThingData): Transferable[] {
+  const transfer: Transferable[] = []
+  const seen = new Set<ArrayBuffer>()
+  for (const sprites of data.sprites.values()) {
+    for (const sprite of sprites) {
+      const pixels = sprite.pixels
+      if (!pixels || pixels.byteLength === 0) continue
+      if (pixels.byteOffset !== 0 || pixels.byteLength !== pixels.buffer.byteLength) continue
+      const buffer = pixels.buffer
+      if (!(buffer instanceof ArrayBuffer)) continue
+      if (seen.has(buffer)) continue
+      seen.add(buffer)
+      transfer.push(buffer)
+    }
+  }
+  return transfer
+}
+
 // ---------------------------------------------------------------------------
 // App
 // ---------------------------------------------------------------------------
@@ -427,6 +454,7 @@ export function App(): React.JSX.Element {
   const [errorMessages, setErrorMessages] = useState<string[]>([])
   const [isLoading, setIsLoading] = useState(false)
   const [loadingLabel, setLoadingLabel] = useState('')
+  const [loadingProgress, setLoadingProgress] = useState<LoadingProgress | null>(null)
   const [thingListLoadingState, setThingListLoadingState] = useState<ThingListLoadingState>({
     active: false,
     label: ''
@@ -543,8 +571,7 @@ export function App(): React.JSX.Element {
         clientVersion: ci.clientVersion,
         thing,
         sprites: new Map([[FrameGroupType.DEFAULT, []]]),
-        xmlAttributes:
-          cat === ThingCategory.ITEM ? getEditableXmlAttributes(thingId) : null
+        xmlAttributes: cat === ThingCategory.ITEM ? getEditableXmlAttributes(thingId) : null
       }
       setEditingThingData(thingData)
     },
@@ -562,11 +589,7 @@ export function App(): React.JSX.Element {
         setEditableXmlAttributes(sanitizedThing.id, xmlAttributes)
       }
 
-      useAppStore.getState().updateThing(
-        sanitizedThing.category,
-        sanitizedThing.id,
-        sanitizedThing
-      )
+      useAppStore.getState().updateThing(sanitizedThing.category, sanitizedThing.id, sanitizedThing)
       editorState.setEditingChanged(false)
     }
   }, [])
@@ -796,8 +819,7 @@ export function App(): React.JSX.Element {
               ...dialogFeatures,
               ...otfiData.features,
               metadataController: otfiData.features.metadataController ?? 'default',
-              attributeServer:
-                otfiData.features.attributeServer ?? result.attributeServer ?? null
+              attributeServer: otfiData.features.attributeServer ?? result.attributeServer ?? null
             }
           : dialogFeatures
 
@@ -864,9 +886,7 @@ export function App(): React.JSX.Element {
           if (!loadResult.sprBuffer) {
             throw new Error('SPR buffer missing for non-PXG project')
           }
-          useSpriteStore
-            .getState()
-            .loadFromBuffer(loadResult.sprBuffer, effectiveFeatures.extended)
+          useSpriteStore.getState().loadFromBuffer(loadResult.sprBuffer, effectiveFeatures.extended)
           addLog('info', `SPR: ${loadResult.spriteSource.spriteCount} sprites (lazy loading)`)
         }
 
@@ -886,7 +906,10 @@ export function App(): React.JSX.Element {
             count: serverItemsResult.itemList.count
           }
 
-          addLog('info', `OTB: ${otbInfo.count} items (v${otbInfo.majorVersion}.${otbInfo.minorVersion})`)
+          addLog(
+            'info',
+            `OTB: ${otbInfo.count} items (v${otbInfo.majorVersion}.${otbInfo.minorVersion})`
+          )
 
           if (serverItemsResult.missingAttributes.length > 0) {
             addLog(
@@ -1020,9 +1043,32 @@ export function App(): React.JSX.Element {
       state.setLocked(true)
 
       try {
+        const compileT0 = performance.now()
         const things = state.things
-        const sprites = useSpriteStore.getState().getAllSprites()
-        const maxSpriteId = getMaxSpriteId(sprites)
+        const spriteState = useSpriteStore.getState()
+        const canStreamSprites =
+          !state.project.isTemporary &&
+          !!state.project.sprFilePath &&
+          params.features.transparency === currentClientInfo.features.transparency
+        const planT0 = performance.now()
+        const sprWritePlan = canStreamSprites
+          ? spriteState.getSpriteWritePlan(
+              state.project.sprFilePath,
+              params.version.sprSignature,
+              params.features.extended
+            )
+          : null
+        if (sprWritePlan) {
+          const overrideCount = sprWritePlan.overrideIndex?.length ?? sprWritePlan.overrides.length
+          addLog(
+            'info',
+            `SPR plan: ${overrideCount} overrides, count=${sprWritePlan.spriteCount} in ${Math.round(
+              performance.now() - planT0
+            )}ms`
+          )
+        }
+        let sprBuffer: ArrayBuffer | null = null
+        let maxSpriteId = sprWritePlan?.spriteCount ?? 0
 
         const datBuffer = await workerService.writeDat(
           {
@@ -1049,15 +1095,22 @@ export function App(): React.JSX.Element {
           getDefaultDurations(settings)
         )
 
-        setLoadingLabel('Compiling sprites...')
-        const sprBuffer = await workerService.writeSpr(
-          {
-            signature: params.version.sprSignature,
-            spriteCount: maxSpriteId,
-            sprites
-          },
-          params.features.extended
-        )
+        if (sprWritePlan) {
+          setLoadingLabel('Saving sprites...')
+        } else {
+          setLoadingLabel('Preparing sprites...')
+          const sprites = spriteState.getAllSprites()
+          maxSpriteId = getMaxSpriteId(sprites)
+          setLoadingLabel('Saving sprites...')
+          sprBuffer = await workerService.writeSpr(
+            {
+              signature: params.version.sprSignature,
+              spriteCount: maxSpriteId,
+              sprites
+            },
+            params.features.extended
+          )
+        }
 
         const otfiContent = writeOtfi(
           createOtfiData(
@@ -1083,11 +1136,13 @@ export function App(): React.JSX.Element {
         }
 
         setLoadingLabel('Writing files...')
+        const writeT0 = performance.now()
         await window.api.project.compile({
           datFilePath: params.datFilePath,
           sprFilePath: params.sprFilePath,
           datBuffer,
           sprBuffer,
+          sprWritePlan,
           versionValue: params.version.value,
           datSignature: params.version.datSignature,
           sprSignature: params.version.sprSignature,
@@ -1097,6 +1152,12 @@ export function App(): React.JSX.Element {
           xmlContent,
           otfiContent
         })
+        addLog(
+          'info',
+          `Write files (IPC) ${Math.round(performance.now() - writeT0)}ms; compile total ${Math.round(
+            performance.now() - compileT0
+          )}ms`
+        )
 
         const updatedClientInfo: ClientInfo = {
           ...currentClientInfo,
@@ -1155,6 +1216,7 @@ export function App(): React.JSX.Element {
         state.setLocked(false)
         setIsLoading(false)
         setLoadingLabel('')
+        setLoadingProgress(null)
       }
     },
     [addLog, saveCurrentThingChanges]
@@ -1362,10 +1424,17 @@ export function App(): React.JSX.Element {
           )
         }
 
+        const exportThingEntries = plan.entries.map((entry) => entry.thing)
+        await preloadFileBackedSpriteIds(
+          collectThingsSpriteIds(exportThingEntries),
+          setLoadingLabel,
+          'Preparing export sprites...',
+          setLoadingProgress
+        )
+        setLoadingProgress({ done: 0, total: plan.entries.length })
+
         const transparent = exportClientInfo.features.transparency
         const encodeThing = async (entry: ThingExportEntry): Promise<ArrayBuffer> => {
-          await useSpriteStore.getState().ensureSpritesCached(collectThingSpriteIds(entry.thing))
-
           if (result.format === OTFormat.OBD) {
             if (!result.version) {
               throw new Error('OBD export requires a target version')
@@ -1401,7 +1470,10 @@ export function App(): React.JSX.Element {
               entry.thing,
               spriteMap
             )
-            return workerService.encodeObd(thingData)
+            return workerService.encodeObd(
+              thingData,
+              collectThingDataSpriteTransferables(thingData)
+            )
           }
 
           const frameGroup = getThingFrameGroup(entry.thing, FrameGroupType.DEFAULT)
@@ -1461,6 +1533,12 @@ export function App(): React.JSX.Element {
           fileNamePrefix: result.fileName,
           format: result.format,
           useOriginalIdsInFileNames: result.useOriginalIdsInFileNames,
+          batchSize: 25,
+          onProgress: ({ completed, total }) => {
+            setLoadingLabel(`Exporting objects... ${completed}/${total}`)
+            setLoadingProgress({ done: completed, total })
+          },
+          yieldBetweenBatches: () => new Promise((resolve) => setTimeout(resolve, 0)),
           encodeThing,
           writeBinary: (filePath, data) => window.api.file.writeBinary(filePath, data),
           writeText: (filePath, text) => window.api.file.writeText(filePath, text)
@@ -1482,6 +1560,7 @@ export function App(): React.JSX.Element {
         state.setLocked(false)
         setIsLoading(false)
         setLoadingLabel('')
+        setLoadingProgress(null)
       }
     },
     [addLog, currentCategory, selectedThingIds, selectedThingId]
@@ -1489,7 +1568,7 @@ export function App(): React.JSX.Element {
 
   const handleImportConfirm = useCallback(
     async (result: ImportThingResult) => {
-      addLog('info', `Importing: ${result.entries.length} object(s) (${result.action})`)
+      addLog('info', `Importing: ${result.filePaths.length} object(s) (${result.action})`)
 
       const appState = useAppStore.getState()
       const importClientInfo = appState.clientInfo
@@ -1499,18 +1578,33 @@ export function App(): React.JSX.Element {
       }
 
       setIsLoading(true)
-      setLoadingLabel('Importing object...')
+      setLoadingLabel('Importing objects...')
+      setLoadingProgress({ done: 0, total: result.filePaths.length })
       appState.setLocked(true)
+      const addedSpriteIdsForRollback: number[] = []
 
       try {
         const settings = await window.api.settings.load()
         const defaultDurations = getDefaultDurations(settings)
+        const entries: Array<{ filePath: string; thingData: ThingData }> = []
+
+        for (let index = 0; index < result.filePaths.length; index++) {
+          const filePath = result.filePaths[index]
+          setLoadingLabel(`Importing objects... ${index + 1}/${result.filePaths.length}`)
+          const buffer = await window.api.file.readBinary(filePath)
+          const thingData = await workerService.decodeObd(
+            new Uint8Array(buffer).buffer,
+            defaultDurations
+          )
+          entries.push({ filePath, thingData })
+          setLoadingProgress({ done: index + 1, total: result.filePaths.length })
+          await new Promise((resolve) => setTimeout(resolve, 0))
+        }
+
         let importedCount = 0
 
-        const prepareImportedThing = (entry: ImportThingResult['entries'][number]) => {
-          let imported:
-            | ReturnType<typeof materializeImportedThingData>
-            | null = null
+        const prepareImportedThing = (entry: { filePath: string; thingData: ThingData }) => {
+          let imported: ReturnType<typeof materializeImportedThingData> | null = null
           const category = entry.thingData.thing.category
 
           try {
@@ -1526,6 +1620,7 @@ export function App(): React.JSX.Element {
               transparent: importClientInfo.features.transparency,
               addSprite: (compressed) => useSpriteStore.getState().addSprite(compressed)
             })
+            addedSpriteIdsForRollback.push(...imported.addedSpriteIds)
 
             return imported
           } catch (err) {
@@ -1563,13 +1658,13 @@ export function App(): React.JSX.Element {
             throw new Error('No object selected for replace')
           }
 
-          if (targetIds.length !== result.entries.length) {
+          if (targetIds.length !== entries.length) {
             throw new Error(
-              `Selected ${targetIds.length} object(s), but received ${result.entries.length} file(s).`
+              `Selected ${targetIds.length} object(s), but received ${entries.length} file(s).`
             )
           }
 
-          const mismatchedCategory = result.entries.find(
+          const mismatchedCategory = entries.find(
             (entry) => entry.thingData.thing.category !== currentCategory
           )
           if (mismatchedCategory) {
@@ -1580,8 +1675,8 @@ export function App(): React.JSX.Element {
 
           const replacedTargetIds: number[] = []
 
-          for (let index = 0; index < result.entries.length; index++) {
-            const entry = result.entries[index]
+          for (let index = 0; index < entries.length; index++) {
+            const entry = entries[index]
             const imported = prepareImportedThing(entry)
 
             const targetId = targetIds[index]
@@ -1600,7 +1695,7 @@ export function App(): React.JSX.Element {
         } else {
           let lastAddedId: number | null = null
 
-          for (const entry of result.entries) {
+          for (const entry of entries) {
             const imported = prepareImportedThing(entry)
 
             const category = imported.thing.category
@@ -1634,6 +1729,9 @@ export function App(): React.JSX.Element {
           await window.api.menu.updateState({ clientChanged: true })
         }
       } catch (err) {
+        if (addedSpriteIdsForRollback.length > 0) {
+          useSpriteStore.getState().removeSprites(addedSpriteIdsForRollback)
+        }
         const message = err instanceof Error ? err.message : String(err)
         addLog('error', `Failed to import object: ${message}`)
         setErrorMessages([message])
@@ -1642,6 +1740,7 @@ export function App(): React.JSX.Element {
         useAppStore.getState().setLocked(false)
         setIsLoading(false)
         setLoadingLabel('')
+        setLoadingProgress(null)
       }
     },
     [addLog, currentCategory, loadThingIntoEditor, selectedThingId, selectedThingIds]
@@ -1928,15 +2027,28 @@ export function App(): React.JSX.Element {
       const message = error instanceof Error ? error.message : String(error)
       addLog('error', `Failed to save panel visibility: ${message}`)
     })
-  }, [
-    addLog,
-    runtimeSettings,
-    ui.showEditorPanel,
-    ui.showLogPanel,
-    ui.showSpritesPanel
-  ])
+  }, [addLog, runtimeSettings, ui.showEditorPanel, ui.showLogPanel, ui.showSpritesPanel])
 
   const closeDialog = useCallback(() => setActiveDialog(null), [])
+  const handleSpriteImportProgress = useCallback((progress: SpriteImportProgress | null) => {
+    const state = useAppStore.getState()
+
+    if (!progress) {
+      state.setLocked(false)
+      setIsLoading(false)
+      setLoadingLabel('')
+      setLoadingProgress(null)
+      return
+    }
+
+    flushSync(() => {
+      state.setLocked(true)
+      setIsLoading(true)
+      setLoadingLabel(`${progress.label} ${progress.done}/${progress.total}`)
+      setLoadingProgress({ done: progress.done, total: progress.total })
+    })
+  }, [])
+  const activeLoadingProgress = loadingProgress ?? thingListLoadingState.progress ?? null
 
   return (
     <div className="flex h-full flex-col">
@@ -1965,7 +2077,12 @@ export function App(): React.JSX.Element {
               />
             }
             center={<ThingTypeEditor />}
-            right={<SpritePanel pageSize={runtimeSettings.spritesListAmount} />}
+            right={
+              <SpritePanel
+                pageSize={runtimeSettings.spritesListAmount}
+                onSpriteImportProgress={handleSpriteImportProgress}
+              />
+            }
             leftWidth={ui.thingListContainerWidth}
             rightWidth={ui.spritesContainerWidth}
             leftMinWidth={190}
@@ -2181,7 +2298,7 @@ export function App(): React.JSX.Element {
             <span className="text-sm text-text-primary">
               {loadingLabel || thingListLoadingState.label || 'Loading...'}
             </span>
-            {thingListLoadingState.progress && thingListLoadingState.progress.total > 0 && (
+            {activeLoadingProgress && activeLoadingProgress.total > 0 && (
               <div className="flex w-full flex-col gap-2">
                 <div className="h-1.5 w-full overflow-hidden rounded-full bg-bg-tertiary">
                   <div
@@ -2191,16 +2308,14 @@ export function App(): React.JSX.Element {
                         0,
                         Math.min(
                           100,
-                          (thingListLoadingState.progress.done /
-                            thingListLoadingState.progress.total) *
-                            100
+                          (activeLoadingProgress.done / activeLoadingProgress.total) * 100
                         )
                       )}%`
                     }}
                   />
                 </div>
                 <span className="text-center text-xs text-text-secondary">
-                  {thingListLoadingState.progress.done}/{thingListLoadingState.progress.total}
+                  {activeLoadingProgress.done}/{activeLoadingProgress.total}
                 </span>
               </div>
             )}
